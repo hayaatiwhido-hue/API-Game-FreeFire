@@ -14,6 +14,8 @@ let context = null;
 let page = null;
 let busy = false;
 let lastResult = null;
+let livePollTimer = null;
+let liveRefreshing = false;
 
 async function getPage() {
   if (!browser) {
@@ -264,11 +266,52 @@ async function clickTab(page, label) {
 async function extractSection(page, section) {
   await clickTab(page, section);
 
-  const deadline = Date.now() + 4500;
+  const deadline = Date.now() + 3500;
 
   while (Date.now() < deadline) {
     const matrix = await page.evaluate((wantedSection) => {
       const clean = v => String(v ?? "").replace(/\s+/g, " ").trim();
+
+      function expandRows(rows) {
+        const grid = [];
+        for (let r = 0; r < rows.length; r++) {
+          if (!grid[r]) grid[r] = [];
+          let col = 0;
+
+          for (const cell of rows[r].querySelectorAll(":scope > th, :scope > td")) {
+            while (grid[r][col] !== undefined) col++;
+
+            const text = clean(cell.innerText);
+            const rs = Math.max(1, Number(cell.getAttribute("rowspan") || 1));
+            const cs = Math.max(1, Number(cell.getAttribute("colspan") || 1));
+
+            for (let rr = 0; rr < rs; rr++) {
+              if (!grid[r + rr]) grid[r + rr] = [];
+              for (let cc = 0; cc < cs; cc++) {
+                grid[r + rr][col + cc] = text;
+              }
+            }
+            col += cs;
+          }
+        }
+        return grid;
+      }
+
+      function normalizeHeader(headerRows) {
+        const expanded = expandRows(headerRows);
+        const width = Math.max(0, ...expanded.map(r => r.length));
+        const header = [];
+
+        for (let c = 0; c < width; c++) {
+          const parts = [];
+          for (let r = 0; r < expanded.length; r++) {
+            const value = clean(expanded[r]?.[c] || "");
+            if (value && !parts.includes(value)) parts.push(value);
+          }
+          header[c] = parts.join(" / ");
+        }
+        return header;
+      }
 
       const tables = [...document.querySelectorAll("table")].filter(t => {
         const r = t.getBoundingClientRect();
@@ -279,55 +322,54 @@ async function extractSection(page, section) {
       let bestScore = -1;
 
       for (const table of tables) {
-        const theadRows = [...table.querySelectorAll("thead tr")];
-        const tbodyRows = [...table.querySelectorAll("tbody tr")];
+        const theadRows = [...table.querySelectorAll("thead > tr")];
+        const allRows = [...table.querySelectorAll("tr")];
+        if (!allRows.length) continue;
 
         let header = [];
-        let body = [];
+        let bodyRows = [];
 
         if (theadRows.length) {
-          const headerRows = theadRows.map(tr =>
-            [...tr.querySelectorAll("th,td")].map(c => clean(c.innerText))
-          );
-
-          const width = Math.max(0, ...headerRows.map(r => r.length));
-          header = Array.from({length: width}, (_, col) => {
-            return headerRows
-              .map(row => row[col] || "")
-              .filter(Boolean)
-              .join(" / ");
-          });
-
-          body = tbodyRows.map(tr =>
-            [...tr.querySelectorAll("td,th")].map(c => clean(c.innerText))
-          );
+          header = normalizeHeader(theadRows);
+          const tbody = table.querySelector("tbody");
+          bodyRows = tbody
+            ? [...tbody.querySelectorAll(":scope > tr")]
+            : allRows.slice(theadRows.length);
         } else {
-          const rows = [...table.querySelectorAll("tr")].map(tr =>
-            [...tr.querySelectorAll("th,td")].map(c => clean(c.innerText))
-          );
-
-          if (!rows.length) continue;
-          header = rows[0] || [];
-          body = rows.slice(1);
+          // Fallback for tables that do not use THEAD/TBODY.
+          const headerCandidates = allRows.slice(0, Math.min(2, allRows.length));
+          header = normalizeHeader(headerCandidates);
+          bodyRows = allRows.slice(headerCandidates.length);
         }
+
+        const body = bodyRows.map(tr => {
+          const cells = [...tr.querySelectorAll(":scope > td, :scope > th")];
+          return cells.map(c => clean(c.innerText));
+        }).filter(row => row.length);
 
         if (!header.length || !body.length) continue;
 
+        // Some tables expose duplicated/empty header cells. Keep the real
+        // labels such as Rank, TeamName, UID, Kill, Headshot, etc.
         const h = header.join(" | ").toLowerCase();
 
-        let score = body.length * 3;
+        let score = body.length * 4 + header.length * 2;
 
         if (wantedSection === "Team Data") {
-          if (/team id|team name|match id/.test(h)) score += 80;
-          if (/total score|survival score|damage|kill|headshot/.test(h)) score += 35;
-          if (/uid|nickname|player/.test(h)) score -= 15;
+          if (/\brank\b/.test(h)) score += 25;
+          if (/team ?name|teamname/.test(h)) score += 35;
+          if (/team ?id|match ?id/.test(h)) score += 25;
+          if (/score|survival|damage|kill|headshot/.test(h)) score += 30;
+          if (/nickname|uid|player/.test(h)) score -= 15;
         } else {
-          if (/nickname|uid|player id|player name/.test(h)) score += 80;
-          if (/kill|headshot|survival|revival|rescue|damage/.test(h)) score += 35;
-          if (/team name|team id/.test(h)) score += 10;
+          if (/\brank\b/.test(h)) score += 15;
+          if (/nickname|player ?name|playername/.test(h)) score += 40;
+          if (/\buid\b|player ?id/.test(h)) score += 30;
+          if (/team ?name|teamname/.test(h)) score += 10;
+          if (/kill|headshot|survival|revival|rescue|damage/.test(h)) score += 30;
         }
 
-        if (header.length >= 4) score += 10;
+        if (header.length >= 5) score += 10;
 
         if (score > bestScore) {
           bestScore = score;
@@ -339,20 +381,67 @@ async function extractSection(page, section) {
     }, section);
 
     if (matrix.length >= 2) return matrix;
-
-    await page.waitForTimeout(80);
+    await page.waitForTimeout(60);
   }
 
   return [];
 }
 
+async function refreshCurrentMatch() {
+  if (!page || !lastResult?.sourceUrl || liveRefreshing) return null;
+
+  liveRefreshing = true;
+  try {
+    // The official MatchStats updates its displayed values after a page
+    // reload. Reload the exact View URL instead of searching the MatchID again.
+    await page.goto(lastResult.sourceUrl, {
+      waitUntil: "domcontentloaded",
+      timeout: 10000
+    }).catch(() => {});
+
+    await page.waitForTimeout(120);
+
+    const team = await extractSection(page, "Team Data");
+    const player = await extractSection(page, "Player Data");
+
+    if (team.length >= 2 || player.length >= 2) {
+      lastResult = {
+        ...lastResult,
+        sourceUrl: page.url() || lastResult.sourceUrl,
+        capturedAt: new Date().toISOString(),
+        teamData: team.length >= 2 ? team : lastResult.teamData,
+        playerData: player.length >= 2 ? player : lastResult.playerData
+      };
+    }
+
+    return lastResult;
+  } finally {
+    liveRefreshing = false;
+  }
+}
+
+function stopLivePolling() {
+  if (livePollTimer) {
+    clearInterval(livePollTimer);
+    livePollTimer = null;
+  }
+}
+
+function startLivePolling() {
+  stopLivePolling();
+  livePollTimer = setInterval(() => {
+    refreshCurrentMatch().catch(() => {});
+  }, 1000);
+}
+
 async function capture(matchId) {
+  stopLivePolling();
+
   const p = await getPage();
   await p.bringToFront();
 
   await searchMatch(p, matchId);
 
-  // Dá tempo apenas para a página de View montar as tabelas.
   await p.waitForLoadState("domcontentloaded", { timeout: 5000 }).catch(() => {});
   await p.waitForTimeout(80);
 
@@ -363,13 +452,17 @@ async function capture(matchId) {
     throw new Error("A página View abriu, mas nenhuma tabela Team Data/Player Data foi capturada.");
   }
 
-  return {
+  const result = {
     matchId: String(matchId),
     sourceUrl: p.url(),
     capturedAt: new Date().toISOString(),
     teamData: team,
     playerData: player
   };
+
+  lastResult = result;
+  startLivePolling();
+  return result;
 }
 
 
@@ -380,30 +473,14 @@ app.get("/api/refresh", async (req, res) => {
     return res.status(400).json({ ok: false, error: "O MatchID deve conter apenas números." });
   }
 
-  if (!page) {
-    return res.status(409).json({ ok: false, error: "Nenhuma captura ativa. Inicie a captura primeiro." });
+  if (!lastResult || String(lastResult.matchId) !== matchId) {
+    return res.status(409).json({ ok: false, error: "Nenhuma captura ativa para este MatchID." });
   }
 
   try {
-    const current = await page.evaluate(() => location.href);
-    if (!/match/i.test(current) || /\/match\/?$/.test(current)) {
-      return res.status(409).json({ ok: false, error: "A página da partida não está aberta." });
-    }
-
-    // Lê novamente as duas abas da página atual. Não refaz a pesquisa.
-    const team = await extractSection(page, "Team Data");
-    const player = await extractSection(page, "Player Data");
-
-    const result = {
-      matchId,
-      sourceUrl: page.url(),
-      capturedAt: new Date().toISOString(),
-      teamData: team.length ? team : (lastResult?.teamData || []),
-      playerData: player.length ? player : (lastResult?.playerData || [])
-    };
-
-    lastResult = { ...(lastResult || {}), ...result };
-    return res.json({ ok: true, result });
+    // Return the latest server-side snapshot. The background poller is
+    // already refreshing the official View every second.
+    return res.json({ ok: true, result: lastResult });
   } catch (e) {
     return res.status(500).json({
       ok: false,
@@ -412,8 +489,9 @@ app.get("/api/refresh", async (req, res) => {
   }
 });
 
+
 app.get("/api/health", (req, res) => {
-  res.json({ ok: true, version: "1.0.10", busy, hasBrowser: !!browser });
+  res.json({ ok: true, version: "1.0.11", busy, hasBrowser: !!browser });
 });
 
 app.post("/api/capture", async (req, res) => {
@@ -455,6 +533,7 @@ app.listen(PORT, "0.0.0.0", () => {
 });
 
 process.on("SIGTERM", async () => {
+  stopLivePolling();
   try { await browser?.close(); } catch {}
   process.exit(0);
 });
