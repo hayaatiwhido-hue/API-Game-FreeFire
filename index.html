@@ -1,9 +1,201 @@
-<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Stats Engine 1.0.5</title><style>
-:root{color-scheme:dark;font-family:Inter,system-ui,Arial,sans-serif;background:#070a10;color:#eef1f7}*{box-sizing:border-box}body{margin:0;background:radial-gradient(circle at 80% 0,#151d2d 0,#090c13 38%,#05070b 100%);min-height:100vh}.wrap{max-width:1200px;margin:auto;padding:30px 18px 60px}.head h1{font-size:36px;margin:0}.head h1 b{color:#ffb000}.sub{color:#8e98aa;font-size:17px;margin:4px 0 24px}.pill{display:inline-flex;border:1px solid #263044;border-radius:999px;padding:8px 14px;color:#ff5f78;margin-bottom:18px}.card{background:#111722;border:1px solid #273142;border-radius:24px;padding:22px;margin:14px 0;box-shadow:0 12px 30px #0004}.label{font-size:13px;color:#8f98a9;text-transform:uppercase;letter-spacing:.04em}.input{width:100%;margin-top:10px;background:#06090e;border:1px solid #2b3546;border-radius:18px;padding:18px;color:#fff;font-size:20px;outline:none}.actions{display:flex;gap:12px;margin-top:16px}.btn{border:0;border-radius:16px;padding:15px 22px;font-size:17px;font-weight:700;cursor:pointer;background:#fff;color:#111}.btn.dark{background:#273349;color:#fff}.btn.gold{background:#ffb000;color:#111}.btn:disabled{opacity:.5;cursor:not-allowed}.hint{color:#8f98a9;margin-top:14px;line-height:1.45}.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}.stat{background:#06090e;border:1px solid #283244;border-radius:18px;padding:16px}.stat small{color:#8f98a9}.stat strong{display:block;font-size:27px;margin-top:6px}.diag{font-family:ui-monospace,monospace;background:#05080d;border-radius:16px;padding:15px;white-space:pre-wrap;word-break:break-word;color:#cdd5e3;max-height:300px;overflow:auto}.sectionHead{display:flex;align-items:center;justify-content:space-between;gap:12px}.sectionHead h2{font-size:18px;margin:0}.tableWrap{overflow:auto;border:1px solid #273142;border-radius:14px;margin-top:12px}.dataTable{border-collapse:collapse;width:100%;min-width:700px;font-size:13px}.dataTable th,.dataTable td{padding:10px 12px;border-bottom:1px solid #202938;text-align:left;white-space:nowrap}.dataTable th{background:#0b0f16;color:#aab3c3;position:sticky;top:0}.empty{color:#8f98a9;padding:15px}@media(max-width:700px){.wrap{padding:24px 14px 45px}.head h1{font-size:31px}.stats{grid-template-columns:repeat(2,1fr)}.actions{flex-direction:column}.btn{width:100%}.card{border-radius:20px;padding:20px}}
-</style></head><body><main class="wrap"><header class="head"><h1>Stats Engine <b>1.0.4</b></h1><div class="sub">MatchStats oficial · pesquisa automática · View · TeamData + PlayerData</div><div id="status" class="pill">● PRONTO</div></header>
-<section class="card"><div class="label">Match ID</div><input id="matchId" class="input" inputmode="numeric" autocomplete="off" placeholder="Digite o MatchID"><div class="actions"><button id="start" class="btn">▶ INICIAR CAPTURA</button><button id="clear" class="btn dark">■ LIMPAR</button></div><div class="hint">O Engine consulta o MatchStats no servidor, encontra a partida pelo MatchID, entra em <b>View</b> e captura as tabelas disponíveis. Você não precisa abrir o MatchStats no celular.</div></section>
-<section class="card stats"><div class="stat"><small>CONSULTAS</small><strong id="queries">0</strong></div><div class="stat"><small>ALTERAÇÕES</small><strong id="changes">0</strong></div><div class="stat"><small>TEAMDATA</small><strong id="teams">0</strong></div><div class="stat"><small>PLAYERDATA</small><strong id="players">0</strong></div></section>
-<section class="card"><div class="sectionHead"><h2>DIAGNÓSTICO</h2><button id="downloadAll" class="btn gold" disabled>⬇ BAIXAR TODAS AS INFORMAÇÕES</button></div><div id="diag" class="diag" style="margin-top:12px">Nenhuma captura realizada.</div></section>
-<div id="results"></div></main><script>
-let last=null,queries=0;const $=id=>document.getElementById(id);function setStatus(t,ok=false){$('status').textContent=(ok?'● OK':'● '+t);$('status').style.color=ok?'#8cffb0':'#ff5f78'}function tableHTML(t){if(!t.rows?.length)return '<div class="empty">Nenhum registro.</div>';return '<div class="tableWrap"><table class="dataTable"><thead><tr>'+t.headers.map(h=>'<th>'+esc(h)+'</th>').join('')+'</tr></thead><tbody>'+t.rows.map(r=>'<tr>'+r.map(v=>'<td>'+esc(v)+'</td>').join('')+'</tr>').join('')+'</tbody></table></div>'}function esc(v){return String(v??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]))}function renderGroup(title,tables){return '<section class="card"><div class="sectionHead"><h2>'+title+'</h2></div>'+ (tables.length?tables.map(tableHTML).join(''):'<div class="empty">Nenhum quadro classificado como '+title+'.</div>')+'</section>'}function flatten(){let all=[];(last.teamData||[]).forEach(t=>all.push({grupo:'TeamData',headers:t.headers,rows:t.rows}));(last.playerData||[]).forEach(t=>all.push({grupo:'PlayerData',headers:t.headers,rows:t.rows}));return all}function csv(){const out=[];for(const t of flatten()){out.push(t.grupo);out.push(t.headers.map(q=>JSON.stringify(q)).join(','));for(const r of t.rows)out.push(r.map(q=>JSON.stringify(q??'')).join(','));out.push('')}return '\ufeff'+out.join('\n')}function download(){const blob=new Blob([csv()],{type:'text/csv;charset=utf-8'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='MatchStats_'+last.matchId+'_TeamData_PlayerData.csv';a.click();URL.revokeObjectURL(a.href)}$('start').onclick=async()=>{const id=$('matchId').value.trim();if(!id)return;queries++;$('queries').textContent=queries;$('start').disabled=true;$('downloadAll').disabled=true;$('results').innerHTML='';setStatus('CAPTURANDO');$('diag').textContent='Abrindo MatchStats e procurando o MatchID…';try{const r=await fetch('/api/capture',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({matchId:id})});const d=await r.json();last=d;if(!r.ok||!d.ok)throw new Error(d.error||'Falha na captura');$('teams').textContent=(d.teamData||[]).reduce((a,t)=>a+t.rows.length,0);$('players').textContent=(d.playerData||[]).reduce((a,t)=>a+t.rows.length,0);$('changes').textContent=(d.allTables||[]).reduce((a,t)=>a+t.rows.length,0);$('diag').textContent=JSON.stringify({status:'OK',matchId:d.matchId,currentUrl:d.currentUrl,title:d.title,teamTables:d.teamData.length,playerTables:d.playerData.length,tempoMs:d.elapsedMs},null,2);$('results').innerHTML=renderGroup('TeamData',d.teamData)+renderGroup('PlayerData',d.playerData);$('downloadAll').disabled=false;setStatus('CAPTURA CONCLUÍDA',true)}catch(e){$('diag').textContent=JSON.stringify({status:'ERROR',matchId:id,error:e.message},null,2);setStatus('ERRO')}finally{$('start').disabled=false}};$('downloadAll').onclick=download;$('clear').onclick=()=>{last=null;$('matchId').value='';$('results').innerHTML='';$('diag').textContent='Nenhuma captura realizada.';$('teams').textContent='0';$('players').textContent='0';$('changes').textContent='0';$('downloadAll').disabled=true;setStatus('PRONTO')}}
-</script></body></html>
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
+<title>Stats Engine 1.0.6</title>
+<style>
+:root{
+  --bg:#070a11; --panel:#101722; --panel2:#0a0e15; --line:#273244;
+  --text:#f3f5f8; --muted:#8f99a9; --accent:#ffb300; --accent2:#ffd45a;
+  --danger:#ff5d7d; --good:#55d98c;
+}
+*{box-sizing:border-box}
+body{margin:0;background:radial-gradient(circle at 80% 0,#121b2d 0,#070a11 45%,#05070b 100%);color:var(--text);font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif}
+.wrap{width:min(1500px,calc(100% - 28px));margin:auto;padding:28px 0 60px}
+.top{display:flex;justify-content:space-between;align-items:flex-end;gap:18px;margin-bottom:24px}
+h1{font-size:clamp(28px,4vw,48px);margin:0;font-weight:700;letter-spacing:-1.5px}
+h1 b{color:var(--accent)}
+.sub{color:var(--muted);margin-top:6px;font-size:15px}
+.status{border:1px solid var(--line);border-radius:999px;padding:10px 15px;color:var(--muted);white-space:nowrap}
+.dot{display:inline-block;width:10px;height:10px;border-radius:50%;background:var(--danger);margin-right:8px}
+.status.ok .dot{background:var(--good)}
+.card{background:linear-gradient(180deg,rgba(17,24,36,.98),rgba(12,17,26,.98));border:1px solid var(--line);border-radius:20px;padding:22px;margin-bottom:18px;box-shadow:0 12px 40px rgba(0,0,0,.18)}
+label{display:block;color:#9ca5b4;font-size:13px;text-transform:uppercase;letter-spacing:.04em;margin-bottom:9px}
+.search{display:grid;grid-template-columns:1fr 190px;gap:12px}
+input{width:100%;height:58px;background:#06090f;border:1px solid #303b4d;border-radius:15px;color:#fff;font-size:18px;padding:0 17px;outline:none}
+input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(255,179,0,.1)}
+button{height:58px;border:0;border-radius:15px;background:var(--accent);color:#0b0d11;font-size:16px;font-weight:750;cursor:pointer}
+button:disabled{opacity:.55;cursor:wait}
+.meta{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-top:16px}
+.kpi{background:#080c13;border:1px solid #202b3b;border-radius:14px;padding:16px}
+.kpi small{display:block;color:#7e899a;text-transform:uppercase;font-size:11px;margin-bottom:7px}
+.kpi strong{font-size:22px}
+.notice{color:var(--muted);line-height:1.5;margin-top:13px}
+.error{color:#ff9aae;background:rgba(255,80,110,.07);border:1px solid rgba(255,80,110,.2);border-radius:12px;padding:13px;margin-top:14px;display:none}
+.tabs{display:flex;gap:8px;border-bottom:1px solid var(--line);margin:0 -22px;padding:0 22px}
+.tab{background:transparent;color:var(--muted);height:48px;border-radius:0;border-bottom:2px solid transparent}
+.tab.active{color:var(--accent);border-color:var(--accent)}
+.tablebox{overflow:auto;border:1px solid #202a39;border-radius:14px;margin-top:16px;max-height:620px}
+table{border-collapse:separate;border-spacing:0;min-width:100%;white-space:nowrap;font-size:12px}
+th{position:sticky;top:0;background:#090d14;color:#b8c0cc;text-transform:uppercase;font-size:10px;letter-spacing:.04em;text-align:left;padding:13px 12px;border-bottom:1px solid #273244;z-index:2}
+td{padding:12px;border-bottom:1px solid #18212e;color:#e8ebef}
+tbody tr:nth-child(even){background:rgba(255,255,255,.025)}
+tbody tr:hover{background:rgba(255,179,0,.06)}
+.empty{padding:28px;color:var(--muted);text-align:center}
+.download{display:flex;justify-content:flex-end;margin-top:14px}
+.download button{height:46px;padding:0 20px;font-size:14px}
+.loading{display:none;color:var(--muted);padding-top:12px}
+.spinner{display:inline-block;width:14px;height:14px;border:2px solid #465166;border-top-color:var(--accent);border-radius:50%;animation:spin .7s linear infinite;vertical-align:-2px;margin-right:7px}
+@keyframes spin{to{transform:rotate(360deg)}}
+@media(max-width:700px){
+ .wrap{width:min(100% - 20px,1500px);padding-top:18px}
+ .top{display:block}.status{display:inline-block;margin-top:15px}
+ .search{grid-template-columns:1fr}
+ .meta{grid-template-columns:1fr 1fr}
+ .card{padding:16px;border-radius:17px}
+ .tabs{margin:0 -16px;padding:0 16px}
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="top">
+    <div>
+      <h1>Stats Engine <b>1.0.6</b></h1>
+      <div class="sub">MatchStats oficial · pesquisa rápida · View · TeamData + PlayerData</div>
+    </div>
+    <div id="status" class="status"><span class="dot"></span><span id="statusText">PRONTO</span></div>
+  </div>
+
+  <section class="card">
+    <label>Match ID</label>
+    <div class="search">
+      <input id="matchId" inputmode="numeric" autocomplete="off" value="2088449371717292032" placeholder="Digite o MatchID">
+      <button id="start">▶ INICIAR CAPTURA</button>
+    </div>
+    <div class="loading" id="loading"><span class="spinner"></span>Pesquisando no MatchStats, abrindo View e capturando as tabelas…</div>
+    <div class="notice">A pesquisa é feita diretamente no servidor. O celular não precisa abrir o MatchStats.</div>
+    <div class="error" id="error"></div>
+  </section>
+
+  <section class="card" id="resultCard">
+    <div class="meta">
+      <div class="kpi"><small>Match ID</small><strong id="kMatch">—</strong></div>
+      <div class="kpi"><small>TeamData</small><strong id="kTeam">0</strong></div>
+      <div class="kpi"><small>PlayerData</small><strong id="kPlayer">0</strong></div>
+      <div class="kpi"><small>Tempo</small><strong id="kTime">—</strong></div>
+    </div>
+  </section>
+
+  <section class="card" id="dataCard">
+    <div class="tabs">
+      <button class="tab active" data-tab="team">Team Data</button>
+      <button class="tab" data-tab="player">Player Data</button>
+    </div>
+
+    <div id="teamPanel">
+      <div class="tablebox" id="teamTable"><div class="empty">Nenhum TeamData capturado.</div></div>
+      <div class="download"><button id="downloadTeam">⬇ BAIXAR TEAMDATA</button></div>
+    </div>
+
+    <div id="playerPanel" style="display:none">
+      <div class="tablebox" id="playerTable"><div class="empty">Nenhum PlayerData capturado.</div></div>
+      <div class="download"><button id="downloadPlayer">⬇ BAIXAR PLAYERDATA</button></div>
+    </div>
+
+    <div class="download" style="justify-content:flex-start">
+      <button id="downloadAll">⬇ BAIXAR TODAS AS INFORMAÇÕES</button>
+    </div>
+  </section>
+</div>
+
+<script>
+let result = null;
+
+const $ = s => document.querySelector(s);
+const status = (text, ok=false) => {
+  $("#statusText").textContent = text;
+  $("#status").classList.toggle("ok", ok);
+};
+const esc = v => String(v ?? "").replace(/[&<>"']/g, m => ({
+  "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"
+}[m]));
+
+function renderTable(target, matrix){
+  if(!matrix || matrix.length < 1){
+    target.innerHTML = '<div class="empty">Nenhum dado encontrado.</div>';
+    return;
+  }
+  const header = matrix[0] || [];
+  const body = matrix.slice(1);
+  target.innerHTML = `<table><thead><tr>${header.map(x=>`<th>${esc(x)}</th>`).join("")}</tr></thead><tbody>${
+    body.map(row=>`<tr>${header.map((_,i)=>`<td>${esc(row[i] ?? "")}</td>`).join("")}</tr>`).join("")
+  }</tbody></table>`;
+}
+
+function csv(matrix){
+  return matrix.map(row => row.map(v => `"${String(v??"").replace(/"/g,'""')}"`).join(",")).join("\\n");
+}
+function download(name, content){
+  const blob = new Blob(["\\ufeff"+content], {type:"text/csv;charset=utf-8"});
+  const a=document.createElement("a"); a.href=URL.createObjectURL(blob); a.download=name; a.click();
+  setTimeout(()=>URL.revokeObjectURL(a.href),1000);
+}
+
+async function capture(){
+  const id=$("#matchId").value.trim();
+  if(!/^\\d{5,}$/.test(id)){ $("#error").textContent="Informe um MatchID numérico válido."; $("#error").style.display="block"; return; }
+
+  $("#error").style.display="none";
+  $("#loading").style.display="block";
+  $("#start").disabled=true;
+  status("PESQUISANDO");
+
+  try{
+    const r=await fetch("/api/capture",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({matchId:id})});
+    const j=await r.json();
+    if(!j.ok) throw new Error(j.error || "Falha na captura.");
+
+    result=j.result;
+    $("#kMatch").textContent=result.matchId;
+    $("#kTeam").textContent=Math.max(0,result.teamData.length-1);
+    $("#kPlayer").textContent=Math.max(0,result.playerData.length-1);
+    $("#kTime").textContent=(result.elapsedMs/1000).toFixed(1)+"s";
+    renderTable($("#teamTable"),result.teamData);
+    renderTable($("#playerTable"),result.playerData);
+    status("CAPTURADO",true);
+  }catch(e){
+    status("ERRO");
+    $("#error").textContent=e.message;
+    $("#error").style.display="block";
+  }finally{
+    $("#loading").style.display="none";
+    $("#start").disabled=false;
+  }
+}
+
+$("#start").addEventListener("click",capture);
+$("#matchId").addEventListener("keydown",e=>{if(e.key==="Enter")capture()});
+
+document.querySelectorAll(".tab").forEach(btn=>{
+  btn.addEventListener("click",()=>{
+    document.querySelectorAll(".tab").forEach(x=>x.classList.remove("active"));
+    btn.classList.add("active");
+    const team=btn.dataset.tab==="team";
+    $("#teamPanel").style.display=team?"block":"none";
+    $("#playerPanel").style.display=team?"none":"block";
+  });
+});
+
+$("#downloadTeam").onclick=()=>result?.teamData?.length&&download(`TeamData_${result.matchId}.csv`,csv(result.teamData));
+$("#downloadPlayer").onclick=()=>result?.playerData?.length&&download(`PlayerData_${result.matchId}.csv`,csv(result.playerData));
+$("#downloadAll").onclick=()=>{
+  if(!result)return;
+  const a=csv(result.teamData), b=csv(result.playerData);
+  download(`Match_${result.matchId}_TeamData_PlayerData.csv`,
+    "TEAM DATA\\n"+a+"\\n\\nPLAYER DATA\\n"+b);
+};
+</script>
+</body>
+</html>

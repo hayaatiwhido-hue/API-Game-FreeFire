@@ -1,148 +1,314 @@
-import express from 'express';
-import { chromium } from 'playwright';
+const express = require("express");
+const path = require("path");
+const { chromium } = require("playwright");
 
 const app = express();
 const PORT = process.env.PORT || 10000;
-const MATCHSTATS_URL = process.env.MATCHSTATS_URL || 'https://matchstats.us.ffesports.com/match';
-app.use(express.json({limit:'1mb'}));
-app.use(express.static('.'));
-app.get('/', (req,res)=>res.sendFile(new URL('./index.html', import.meta.url).pathname));
+const TARGET = "https://matchstats.us.ffesports.com/match";
 
-let browserPromise;
-function getBrowser(){
-  if(!browserPromise) browserPromise = chromium.launch({headless:true});
-  return browserPromise;
+app.use(express.json({ limit: "2mb" }));
+app.use(express.static(__dirname));
+
+let browser = null;
+let context = null;
+let page = null;
+let busy = false;
+let lastResult = null;
+
+async function getPage() {
+  if (!browser) {
+    browser = await chromium.launch({
+      headless: true,
+      args: [
+        "--no-sandbox",
+        "--disable-setuid-sandbox",
+        "--disable-dev-shm-usage",
+        "--disable-gpu",
+        "--disable-blink-features=AutomationControlled"
+      ]
+    });
+    context = await browser.newContext({
+      viewport: { width: 1440, height: 1000 },
+      userAgent:
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
+        "(KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36"
+    });
+    page = await context.newPage();
+    page.setDefaultTimeout(7000);
+  }
+  return page;
 }
 
-const norm = v => String(v ?? '').replace(/\\s+/g,' ').trim();
-const normId = v => String(v ?? '').replace(/\\D/g,'');
+function clean(v) {
+  return String(v ?? "").replace(/\s+/g, " ").trim();
+}
 
-async function clickViewForMatch(page, matchId){
-  const target = normId(matchId);
-  await page.goto(MATCHSTATS_URL, {waitUntil:'domcontentloaded', timeout:60000});
-  await page.waitForTimeout(1200);
+function norm(v) {
+  return clean(v).toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "");
+}
 
-  const frames = () => page.frames();
-  // Find the main search input by placeholder/name/nearby text.
+async function visibleText(el) {
+  try { return clean(await el.innerText()); } catch { return ""; }
+}
+
+async function clickSearch(page, input) {
+  const candidates = [
+    'button[type="submit"]',
+    'button:has-text("Search")',
+    'button[title*="Search" i]',
+    '[aria-label*="Search" i]',
+    '.fa-search',
+    'i[class*="search" i]'
+  ];
+  for (const sel of candidates) {
+    try {
+      const loc = page.locator(sel).filter({ visible: true }).first();
+      if (await loc.count()) {
+        await loc.click({ timeout: 1200 });
+        return true;
+      }
+    } catch {}
+  }
+  try {
+    await input.press("Enter");
+    return true;
+  } catch {}
+  return false;
+}
+
+async function searchMatch(page, matchId) {
+  const id = String(matchId).trim();
+
+  await page.goto(TARGET, { waitUntil: "domcontentloaded", timeout: 25000 });
+  await page.waitForLoadState("networkidle", { timeout: 5000 }).catch(() => {});
+
+  const inputs = page.locator("input");
   let input = null;
-  for(const f of frames()){
-    const candidates = f.locator('input');
-    const n = await candidates.count().catch(()=>0);
-    for(let i=0;i<n;i++){
-      const el=candidates.nth(i);
-      const meta = await el.evaluate(e=>({ph:e.placeholder||'',name:e.name||'',type:e.type||'',aria:e.getAttribute('aria-label')||''})).catch(()=>({}));
-      const s=JSON.stringify(meta).toLowerCase();
-      if(s.includes('match') || s.includes('name') || meta.type==='text' || meta.type==='search') { input=el; break; }
-    }
-    if(input) break;
-  }
-  if(input){
-    await input.fill(target);
-    await input.press('Enter').catch(()=>{});
-    await page.waitForTimeout(1200);
-    // Some Angular inputs only react to input/change.
-    await input.evaluate(e=>{e.dispatchEvent(new Event('input',{bubbles:true}));e.dispatchEvent(new Event('change',{bubbles:true}));}).catch(()=>{});
-    await page.waitForTimeout(1000);
+
+  for (let i = 0; i < await inputs.count(); i++) {
+    const x = inputs.nth(i);
+    try {
+      if (await x.isVisible()) {
+        const ph = clean(await x.getAttribute("placeholder"));
+        const name = clean(await x.getAttribute("name"));
+        const type = clean(await x.getAttribute("type"));
+        if (type !== "hidden" && !/date|season|event/i.test(`${ph} ${name}`)) {
+          input = x;
+          break;
+        }
+      }
+    } catch {}
   }
 
-  // Look for the ID in text, hrefs, data attributes, row HTML, and then click a View control in its row.
-  for(let pass=0; pass<4; pass++){
-    for(const f of frames()){
-      const rows = f.locator('tr');
-      const count = await rows.count().catch(()=>0);
-      for(let i=0;i<count;i++){
-        const row=rows.nth(i);
-        const html=await row.evaluate(e=>e.outerHTML).catch(()=> '');
-        if(normId(html).includes(target)){
-          const view=row.getByText(/^View$/i).first();
-          if(await view.count().catch(()=>0)) { await view.click({force:true}); return; }
-          const buttons=row.locator('button,a,[role="button"]');
-          const bn=await buttons.count().catch(()=>0);
-          for(let j=0;j<bn;j++){
-            const b=buttons.nth(j); const t=norm(await b.innerText().catch(()=>''));
-            const h=await b.getAttribute('href').catch(()=>null);
-            if(/^view$/i.test(t) || /view/i.test(h||'')){ await b.click({force:true}); return; }
+  if (!input) throw new Error("Campo de pesquisa do MatchStats não foi localizado.");
+
+  await input.click();
+  await input.fill(id);
+  await input.dispatchEvent("input");
+  await input.dispatchEvent("change");
+  await clickSearch(page, input);
+
+  // A página oficial faz uma consulta assíncrona. Em vez de procurar imediatamente,
+  // observamos DOM + URL por alguns segundos, em pequenos intervalos.
+  const deadline = Date.now() + 9000;
+  let found = false;
+
+  while (Date.now() < deadline) {
+    const body = await page.locator("body").innerText().catch(() => "");
+    if (body.includes(id)) {
+      found = true;
+      break;
+    }
+
+    // Algumas versões do MatchStats renderizam o resultado em iframe.
+    for (const fr of page.frames()) {
+      try {
+        const t = await fr.locator("body").innerText({ timeout: 500 }).catch(() => "");
+        if (t.includes(id)) { found = true; break; }
+      } catch {}
+    }
+    if (found) break;
+    await page.waitForTimeout(180);
+  }
+
+  if (!found) {
+    throw new Error(`O MatchID ${id} não apareceu nos resultados do MatchStats após a pesquisa.`);
+  }
+
+  // Localiza a linha que contém o ID e procura o View dentro dela.
+  const rows = page.locator("tr");
+  for (let i = 0; i < await rows.count(); i++) {
+    const row = rows.nth(i);
+    try {
+      if (!(await row.isVisible())) continue;
+      const txt = await row.innerText();
+      if (!txt.includes(id)) continue;
+
+      const links = row.locator("a,button");
+      for (let j = 0; j < await links.count(); j++) {
+        const b = links.nth(j);
+        const label = clean((await b.innerText().catch(() => "")) + " " +
+          (await b.getAttribute("title").catch(() => "")) + " " +
+          (await b.getAttribute("aria-label").catch(() => "")));
+        if (/^view$/i.test(label) || /\bview\b/i.test(label)) {
+          await b.click();
+          return true;
+        }
+      }
+    } catch {}
+  }
+
+  // Fallback: procura qualquer elemento View próximo de uma ocorrência do MatchID.
+  const views = page.getByText("View", { exact: true });
+  for (let i = 0; i < await views.count(); i++) {
+    try {
+      const v = views.nth(i);
+      if (await v.isVisible()) {
+        const parent = v.locator("xpath=ancestor::tr[1]");
+        if (await parent.count()) {
+          const txt = await parent.innerText().catch(() => "");
+          if (txt.includes(id)) {
+            await v.click();
+            return true;
           }
         }
       }
-      const links=f.locator('a'); const ln=await links.count().catch(()=>0);
-      for(let i=0;i<ln;i++){
-        const a=links.nth(i); const h=await a.getAttribute('href').catch(()=>null); const txt=norm(await a.innerText().catch(()=>''));
-        if(normId(h||'').includes(target) && /view/i.test(txt+' '+(h||''))){await a.click({force:true}); return;}
-      }
-    }
-    // Pagination fallback: click next controls if available and not disabled.
-    let advanced=false;
-    for(const f of frames()){
-      const controls=f.locator('button,a,[role="button"]'); const n=await controls.count().catch(()=>0);
-      for(let i=0;i<n;i++){
-        const c=controls.nth(i); const txt=norm(await c.innerText().catch(()=>'')); const aria=await c.getAttribute('aria-label').catch(()=>null); const dis=await c.isDisabled().catch(()=>false);
-        if(dis) continue;
-        if(/^(next|>|›|»)$/i.test(txt) || /next/i.test(aria||'')) { await c.click({force:true}).catch(()=>{}); await page.waitForTimeout(700); advanced=true; break; }
-      }
-      if(advanced) break;
-    }
-    if(!advanced) break;
+    } catch {}
   }
-  throw new Error(`MatchID ${target} foi localizado na página, mas o botão View não pôde ser acionado. Estrutura do MatchStats pode ter mudado.`);
+
+  throw new Error(`A partida ${id} foi localizada, mas o botão View correspondente não foi encontrado.`);
 }
 
-async function extractTables(page){
+async function extractTable(page) {
   return await page.evaluate(() => {
-    const clean=s=>String(s??'').replace(/\\s+/g,' ').trim();
-    const tables=[...document.querySelectorAll('table')];
-    return tables.map((table,index)=>{
-      const rows=[...table.querySelectorAll('tr')];
-      if(!rows.length) return null;
-      let headers=[...rows[0].querySelectorAll('th,td')].map(x=>clean(x.innerText));
-      const body=rows.slice(1).map(r=>[...r.querySelectorAll('th,td')].map(x=>clean(x.innerText))).filter(r=>r.length);
-      return {index, caption:clean(table.querySelector('caption')?.innerText), headers, rows:body};
-    }).filter(Boolean);
+    const clean = v => String(v ?? "").replace(/\s+/g, " ").trim();
+
+    const tables = [...document.querySelectorAll("table")].filter(t => {
+      const r = t.getBoundingClientRect();
+      return r.width > 0 && r.height > 0;
+    });
+
+    let best = null;
+    let bestScore = -1;
+
+    for (const table of tables) {
+      const rows = [...table.querySelectorAll("tr")];
+      if (!rows.length) continue;
+
+      const matrix = rows.map(r => [...r.querySelectorAll("th,td")].map(c => clean(c.innerText)));
+      const header = (matrix[0] || []).join(" | ").toLowerCase();
+      let score = matrix.length * 2;
+      if (/match id|team id|team name/.test(header)) score += 30;
+      if (/player|nickname|uid/.test(header)) score += 20;
+      if (/kill|headshot|survival|revival|rescue/.test(header)) score += 10;
+
+      if (score > bestScore) {
+        bestScore = score;
+        best = matrix;
+      }
+    }
+
+    return best || [];
   });
 }
 
-function classify(tables){
-  const out={teamData:[],playerData:[]};
-  for(const t of tables){
-    const blob=(t.caption+' '+t.headers.join(' ')).toLowerCase();
-    if(blob.includes('player')) out.playerData.push(t);
-    else if(blob.includes('team') || blob.includes('match rank') || blob.includes('survival score')) out.teamData.push(t);
+async function clickTab(page, label) {
+  const candidates = [
+    page.getByText(label, { exact: true }),
+    page.locator(`text=${label}`)
+  ];
+
+  for (const c of candidates) {
+    try {
+      const n = await c.count();
+      for (let i = 0; i < n; i++) {
+        const el = c.nth(i);
+        if (await el.isVisible()) {
+          await el.click({ timeout: 1500 });
+          await page.waitForTimeout(120);
+          return true;
+        }
+      }
+    } catch {}
   }
-  if(!out.teamData.length) out.teamData=tables.filter(t=>/team id|team name|survival score|match rank/i.test(t.headers.join(' ')));
-  if(!out.playerData.length) out.playerData=tables.filter(t=>/player id|player name|nickname|kills|damage|headshot/i.test(t.headers.join(' ')) && !out.teamData.includes(t));
-  return out;
+  return false;
 }
 
-app.post('/api/capture', async (req,res)=>{
-  const matchId=normId(req.body?.matchId);
-  if(!matchId) return res.status(400).json({ok:false,error:'Informe um MatchID válido.'});
-  const started=Date.now();
-  let context;
-  try{
-    const browser=await getBrowser();
-    context=await browser.newContext({viewport:{width:1440,height:1000}, userAgent:'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/131 Safari/537.36'});
-    const page=await context.newPage();
-    page.setDefaultTimeout(15000);
-    await clickViewForMatch(page,matchId);
-    await page.waitForLoadState('domcontentloaded').catch(()=>{});
-    await page.waitForTimeout(1200);
-    // If View opened a new route, keep waiting for data tables.
-    for(let i=0;i<10;i++){
-      const n=await page.locator('table').count().catch(()=>0);
-      if(n>0) break;
-      await page.waitForTimeout(600);
-    }
-    const tables=await extractTables(page);
-    const classified=classify(tables);
-    const title=norm(await page.title().catch(()=>''));
-    const currentUrl=page.url();
-    if(!tables.length) throw new Error('A página View foi aberta, mas nenhum quadro de dados foi encontrado.');
-    res.json({ok:true,matchId,title,currentUrl,teamData:classified.teamData,playerData:classified.playerData,allTables:tables,elapsedMs:Date.now()-started});
-  }catch(e){
-    res.status(502).json({ok:false,error:e?.message||String(e),elapsedMs:Date.now()-started});
-  }finally{ if(context) await context.close().catch(()=>{}); }
+async function extractSection(page, section) {
+  await clickTab(page, section);
+  await page.waitForTimeout(150);
+  return await extractTable(page);
+}
+
+async function capture(matchId) {
+  const p = await getPage();
+  await p.bringToFront();
+
+  await searchMatch(p, matchId);
+
+  // Dá tempo apenas para a página de View montar as tabelas.
+  await p.waitForLoadState("domcontentloaded", { timeout: 5000 }).catch(() => {});
+  await p.waitForTimeout(350);
+
+  const team = await extractSection(p, "Team Data");
+  const player = await extractSection(p, "Player Data");
+
+  if (!team.length && !player.length) {
+    throw new Error("A página View abriu, mas nenhuma tabela Team Data/Player Data foi capturada.");
+  }
+
+  return {
+    matchId: String(matchId),
+    sourceUrl: p.url(),
+    capturedAt: new Date().toISOString(),
+    teamData: team,
+    playerData: player
+  };
+}
+
+app.get("/api/health", (req, res) => {
+  res.json({ ok: true, version: "1.0.6", busy, hasBrowser: !!browser });
 });
 
-app.get('/api/health',(req,res)=>res.json({ok:true,version:'1.0.5'}));
-process.on('SIGTERM',async()=>{if(browserPromise){const b=await browserPromise.catch(()=>null); await b?.close().catch(()=>{});} process.exit(0);});
-app.listen(PORT,()=>console.log(`Stats Engine 1.0.5 listening on ${PORT}`));
+app.post("/api/capture", async (req, res) => {
+  const matchId = String(req.body?.matchId || "").trim();
+
+  if (!/^\d{5,}$/.test(matchId)) {
+    return res.status(400).json({ ok: false, error: "Informe um MatchID numérico válido." });
+  }
+
+  if (busy) {
+    return res.status(409).json({ ok: false, error: "Já existe uma captura em andamento. Aguarde alguns segundos." });
+  }
+
+  busy = true;
+  const started = Date.now();
+
+  try {
+    const result = await capture(matchId);
+    result.elapsedMs = Date.now() - started;
+    lastResult = result;
+    res.json({ ok: true, result });
+  } catch (e) {
+    res.status(500).json({
+      ok: false,
+      error: e?.message || "Falha na captura.",
+      elapsedMs: Date.now() - started
+    });
+  } finally {
+    busy = false;
+  }
+});
+
+app.get("/api/last", (req, res) => {
+  res.json({ ok: true, result: lastResult });
+});
+
+app.listen(PORT, "0.0.0.0", () => {
+  console.log(`Stats Engine 1.0.6 running on port ${PORT}`);
+});
+
+process.on("SIGTERM", async () => {
+  try { await browser?.close(); } catch {}
+  process.exit(0);
+});
