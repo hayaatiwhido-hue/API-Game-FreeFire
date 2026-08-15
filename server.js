@@ -1,5 +1,4 @@
 const express = require("express");
-const path = require("path");
 const { chromium } = require("playwright");
 
 const app = express();
@@ -14,8 +13,8 @@ let context = null;
 let page = null;
 let busy = false;
 let lastResult = null;
-let livePollTimer = null;
-let liveRefreshing = false;
+let liveWatchTask = null;
+const sseClients = new Set();
 
 async function getPage() {
   if (!browser) {
@@ -36,7 +35,7 @@ async function getPage() {
         "(KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36"
     });
     page = await context.newPage();
-    page.setDefaultTimeout(9000);
+    page.setDefaultTimeout(7000);
   }
   return page;
 }
@@ -45,47 +44,84 @@ function clean(v) {
   return String(v ?? "").replace(/\s+/g, " ").trim();
 }
 
-function norm(v) {
-  return clean(v).toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "");
+function sameData(a, b) {
+  return JSON.stringify({
+    teamData: a?.teamData || [],
+    playerData: a?.playerData || []
+  }) === JSON.stringify({
+    teamData: b?.teamData || [],
+    playerData: b?.playerData || []
+  });
 }
 
-async function visibleText(el) {
-  try { return clean(await el.innerText()); } catch { return ""; }
-}
-
-async function clickSearch(page, input) {
-  const candidates = [
-    'button[type="submit"]',
-    'button:has-text("Search")',
-    'button[title*="Search" i]',
-    '[aria-label*="Search" i]',
-    '.fa-search',
-    'i[class*="search" i]'
-  ];
-  for (const sel of candidates) {
-    try {
-      const loc = page.locator(sel).filter({ visible: true }).first();
-      if (await loc.count()) {
-        await loc.click({ timeout: 1200 });
-        return true;
-      }
-    } catch {}
+function broadcast(result) {
+  const payload = `data: ${JSON.stringify({ ok: true, result })}\n\n`;
+  for (const res of [...sseClients]) {
+    try { res.write(payload); } catch { sseClients.delete(res); }
   }
-  try {
-    await input.press("Enter");
-    return true;
-  } catch {}
-  return false;
+}
+
+function normalizeMatrix(matrix, kind) {
+  if (!Array.isArray(matrix) || matrix.length < 2) return [];
+
+  let header = (matrix[0] || []).map((v, i) => clean(v) || `Coluna ${i + 1}`);
+  const body = matrix.slice(1).map(row => header.map((_, i) => clean(row?.[i] ?? "")));
+
+  const norm = v => clean(v).toLowerCase()
+    .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, "");
+
+  const find = (...terms) => {
+    for (let i = 0; i < header.length; i++) {
+      const h = norm(header[i]);
+      if (terms.some(t => h.includes(t))) return i;
+    }
+    return -1;
+  };
+
+  // Keep the official columns, but guarantee the first identification
+  // columns use clear labels in our interface.
+  const rankIdx = find("rank", "posicao", "position");
+  if (rankIdx >= 0) header[rankIdx] = "Rank";
+  else {
+    header.unshift("Rank");
+    body.forEach((row, i) => row.unshift(String(i + 1)));
+  }
+
+  if (kind === "team") {
+    const teamIdx = find("teamname", "teamname", "team", "equipe");
+    if (teamIdx >= 0) header[teamIdx] = "Team Name";
+
+    const survivalIdx = find("survivalscore", "survivalpoints", "survivalpoint", "survivals");
+    const killIdx = find("kills", "kill", "eliminacoes", "eliminacao");
+    const totalIdx = find("totalscore", "totalpoints", "totalpoint", "points", "score");
+
+    if (survivalIdx >= 0) header[survivalIdx] = "Survival Score";
+    if (killIdx >= 0) header[killIdx] = "Kill";
+    if (totalIdx >= 0) header[totalIdx] = "Total Score";
+  } else {
+    const nickIdx = find("nickname", "playername", "player", "nick");
+    if (nickIdx >= 0) header[nickIdx] = "Nickname";
+    const teamIdx = find("teamname", "team", "equipe");
+    if (teamIdx >= 0) header[teamIdx] = "Team Name";
+    const uidIdx = find("uid", "playerid", "accountid");
+    if (uidIdx >= 0) header[uidIdx] = "UID";
+    const killIdx = find("kills", "kill", "eliminacoes", "eliminacao");
+    if (killIdx >= 0) header[killIdx] = "Kill";
+  }
+
+  // Always enumerate Rank according to the currently returned rows.
+  const finalRankIdx = header.findIndex(h => norm(h) === "rank");
+  if (finalRankIdx >= 0) body.forEach((row, i) => row[finalRankIdx] = String(i + 1));
+
+  return [header, ...body];
 }
 
 async function searchMatch(page, matchId) {
   const id = String(matchId).trim();
 
-  await page.goto(TARGET, { waitUntil: "domcontentloaded", timeout: 25000 });
-  await page.waitForLoadState("networkidle", { timeout: 3000 }).catch(() => {});
+  await page.goto(TARGET, { waitUntil: "domcontentloaded", timeout: 18000 });
 
-  // O MatchStats usa um campo de pesquisa dinâmico. Priorizamos o campo
-  // identificado pelo placeholder/nome e usamos o primeiro input de texto como fallback.
   const selectors = [
     'input[placeholder*="Match ID" i]',
     'input[placeholder*="Match" i]',
@@ -96,80 +132,37 @@ async function searchMatch(page, matchId) {
 
   let input = null;
   for (const sel of selectors) {
-    try {
-      const loc = page.locator(sel);
-      const count = await loc.count();
-      for (let i = 0; i < count; i++) {
-        const x = loc.nth(i);
-        if (await x.isVisible()) {
-          input = x;
-          break;
-        }
-      }
-      if (input) break;
-    } catch {}
+    const loc = page.locator(sel);
+    for (let i = 0; i < await loc.count(); i++) {
+      const x = loc.nth(i);
+      if (await x.isVisible().catch(() => false)) { input = x; break; }
+    }
+    if (input) break;
   }
-
   if (!input) throw new Error("Campo de pesquisa do MatchStats não foi localizado.");
 
-  await input.click();
   await input.fill(id);
-  await input.dispatchEvent("input").catch(() => {});
-  await input.dispatchEvent("change").catch(() => {});
-
-  // Primeiro tenta o comportamento nativo do formulário (Enter). Se a página
-  // não responder, tenta o botão/ícone de pesquisa.
   await input.press("Enter").catch(() => {});
-  await page.waitForTimeout(120);
 
-  const searchSelectors = [
+  // Give the site's own search code a short head start. No network-idle wait:
+  // MatchStats can keep background connections open and that used to make the
+  // old engine unnecessarily slow.
+  await page.waitForTimeout(80);
+
+  const searchButtons = [
     'button[type="submit"]',
-    'form button',
     'button[title*="Search" i]',
     '[aria-label*="Search" i]',
-    'button:has(i[class*="search" i])',
-    'i[class*="search" i]'
+    'button:has(i[class*="search" i])'
   ];
 
-  const deadline = Date.now() + 10000;
-  while (Date.now() < deadline) {
-    // Se a linha já apareceu, não fazemos nenhuma espera adicional.
-    const row = page.locator("tr").filter({ hasText: id }).first();
-    try {
-      if (await row.count() && await row.isVisible()) break;
-    } catch {}
-
-    const body = await page.locator("body").innerText().catch(() => "");
-    if (body.includes(id)) break;
-
-    // Alguns builds precisam do clique no ícone depois do Enter.
-    if (Date.now() + 1200 >= deadline) break;
-    for (const sel of searchSelectors) {
-      try {
-        const loc = page.locator(sel);
-        const count = await loc.count();
-        for (let i = 0; i < count; i++) {
-          const b = loc.nth(i);
-          if (await b.isVisible()) {
-            await b.click({ timeout: 700 }).catch(() => {});
-            break;
-          }
-        }
-      } catch {}
-    }
-
-    await page.waitForTimeout(180);
-  }
-
-  // Localiza a linha exata da partida. Não usamos apenas "body contém ID",
-  // porque isso pode encontrar o ID em outro lugar da página.
-  const rows = page.locator("tr");
-  for (let i = 0; i < await rows.count(); i++) {
-    const row = rows.nth(i);
-    try {
-      if (!(await row.isVisible())) continue;
-      const txt = await row.innerText();
-      if (!txt.includes(id)) continue;
+  const rowDeadline = Date.now() + 6500;
+  while (Date.now() < rowDeadline) {
+    const rows = page.locator("tr");
+    for (let i = 0; i < await rows.count(); i++) {
+      const row = rows.nth(i);
+      if (!(await row.isVisible().catch(() => false))) continue;
+      if (!(await row.innerText().catch(() => "")).includes(id)) continue;
 
       const controls = row.locator("a,button");
       for (let j = 0; j < await controls.count(); j++) {
@@ -180,85 +173,56 @@ async function searchMatch(page, matchId) {
           (await b.getAttribute("aria-label").catch(() => ""))
         );
         if (/\bview\b/i.test(label)) {
-          await b.click();
-          return true;
+          await b.click({ timeout: 1500 });
+          return;
         }
-      }
-    } catch {}
-  }
-
-  // Fallback para estruturas onde View não está diretamente dentro do <tr>.
-  const views = page.getByText("View", { exact: true });
-  for (let i = 0; i < await views.count(); i++) {
-    try {
-      const v = views.nth(i);
-      if (!(await v.isVisible())) continue;
-      const parent = v.locator("xpath=ancestor::tr[1]");
-      if (await parent.count()) {
-        const txt = await parent.innerText().catch(() => "");
-        if (txt.includes(id)) {
-          await v.click();
-          return true;
-        }
-      }
-    } catch {}
-  }
-
-  throw new Error(`O MatchID ${id} não apareceu nos resultados do MatchStats. Verifique se a partida está publicada e tente novamente.`);
-}
-
-async function extractTable(page) {
-  return await page.evaluate(() => {
-    const clean = v => String(v ?? "").replace(/\s+/g, " ").trim();
-
-    const tables = [...document.querySelectorAll("table")].filter(t => {
-      const r = t.getBoundingClientRect();
-      return r.width > 0 && r.height > 0;
-    });
-
-    let best = null;
-    let bestScore = -1;
-
-    for (const table of tables) {
-      const rows = [...table.querySelectorAll("tr")];
-      if (!rows.length) continue;
-
-      const matrix = rows.map(r => [...r.querySelectorAll("th,td")].map(c => clean(c.innerText)));
-      const header = (matrix[0] || []).join(" | ").toLowerCase();
-      let score = matrix.length * 2;
-      if (/match id|team id|team name/.test(header)) score += 30;
-      if (/player|nickname|uid/.test(header)) score += 20;
-      if (/kill|headshot|survival|revival|rescue/.test(header)) score += 10;
-
-      if (score > bestScore) {
-        bestScore = score;
-        best = matrix;
       }
     }
 
-    return best || [];
-  });
+    for (const sel of searchButtons) {
+      const loc = page.locator(sel);
+      for (let i = 0; i < await loc.count(); i++) {
+        const b = loc.nth(i);
+        if (await b.isVisible().catch(() => false)) {
+          await b.click({ timeout: 700 }).catch(() => {});
+          break;
+        }
+      }
+    }
+
+    await page.waitForTimeout(100);
+  }
+
+  // Last fallback: locate View near the exact MatchID, including nested/frame-ish DOM.
+  const views = page.getByText("View", { exact: true });
+  for (let i = 0; i < await views.count(); i++) {
+    const v = views.nth(i);
+    if (!(await v.isVisible().catch(() => false))) continue;
+    const parent = v.locator("xpath=ancestor::tr[1]");
+    if (await parent.count()) {
+      const txt = await parent.innerText().catch(() => "");
+      if (txt.includes(id)) { await v.click(); return; }
+    }
+  }
+
+  throw new Error(`O MatchID ${id} não apareceu nos resultados do MatchStats.`);
 }
 
 async function clickTab(page, label) {
   const candidates = [
     page.getByText(label, { exact: true }),
     page.locator(`[role="tab"]`).filter({ hasText: label }),
-    page.locator(`button`).filter({ hasText: label }),
-    page.locator(`a`).filter({ hasText: label })
+    page.locator("button").filter({ hasText: label }),
+    page.locator("a").filter({ hasText: label })
   ];
-
   for (const c of candidates) {
-    try {
-      const n = await c.count();
-      for (let i = 0; i < n; i++) {
-        const el = c.nth(i);
-        if (await el.isVisible()) {
-          await el.click({ timeout: 1500 });
-          return true;
-        }
+    for (let i = 0; i < await c.count(); i++) {
+      const el = c.nth(i);
+      if (await el.isVisible().catch(() => false)) {
+        await el.click({ timeout: 1200 }).catch(() => {});
+        return true;
       }
-    } catch {}
+    }
   }
   return false;
 }
@@ -266,8 +230,7 @@ async function clickTab(page, label) {
 async function extractSection(page, section) {
   await clickTab(page, section);
 
-  const deadline = Date.now() + 3500;
-
+  const deadline = Date.now() + 2500;
   while (Date.now() < deadline) {
     const matrix = await page.evaluate((wantedSection) => {
       const clean = v => String(v ?? "").replace(/\s+/g, " ").trim();
@@ -277,19 +240,14 @@ async function extractSection(page, section) {
         for (let r = 0; r < rows.length; r++) {
           if (!grid[r]) grid[r] = [];
           let col = 0;
-
           for (const cell of rows[r].querySelectorAll(":scope > th, :scope > td")) {
             while (grid[r][col] !== undefined) col++;
-
             const text = clean(cell.innerText);
             const rs = Math.max(1, Number(cell.getAttribute("rowspan") || 1));
             const cs = Math.max(1, Number(cell.getAttribute("colspan") || 1));
-
             for (let rr = 0; rr < rs; rr++) {
               if (!grid[r + rr]) grid[r + rr] = [];
-              for (let cc = 0; cc < cs; cc++) {
-                grid[r + rr][col + cc] = text;
-              }
+              for (let cc = 0; cc < cs; cc++) grid[r + rr][col + cc] = text;
             }
             col += cs;
           }
@@ -297,20 +255,17 @@ async function extractSection(page, section) {
         return grid;
       }
 
-      function normalizeHeader(headerRows) {
-        const expanded = expandRows(headerRows);
+      function normalizeHeader(rows) {
+        const expanded = expandRows(rows);
         const width = Math.max(0, ...expanded.map(r => r.length));
-        const header = [];
-
-        for (let c = 0; c < width; c++) {
+        return Array.from({ length: width }, (_, c) => {
           const parts = [];
           for (let r = 0; r < expanded.length; r++) {
             const value = clean(expanded[r]?.[c] || "");
             if (value && !parts.includes(value)) parts.push(value);
           }
-          header[c] = parts.join(" / ");
-        }
-        return header;
+          return parts.join(" / ");
+        });
       }
 
       const tables = [...document.querySelectorAll("table")].filter(t => {
@@ -318,141 +273,125 @@ async function extractSection(page, section) {
         return r.width > 0 && r.height > 0;
       });
 
-      let best = null;
-      let bestScore = -1;
-
+      let best = null, bestScore = -1;
       for (const table of tables) {
-        const theadRows = [...table.querySelectorAll("thead > tr")];
         const allRows = [...table.querySelectorAll("tr")];
+        const theadRows = [...table.querySelectorAll("thead > tr")];
         if (!allRows.length) continue;
 
-        let header = [];
-        let bodyRows = [];
-
-        if (theadRows.length) {
-          header = normalizeHeader(theadRows);
-          const tbody = table.querySelector("tbody");
-          bodyRows = tbody
-            ? [...tbody.querySelectorAll(":scope > tr")]
-            : allRows.slice(theadRows.length);
-        } else {
-          // Fallback for tables that do not use THEAD/TBODY.
-          const headerCandidates = allRows.slice(0, Math.min(2, allRows.length));
-          header = normalizeHeader(headerCandidates);
-          bodyRows = allRows.slice(headerCandidates.length);
-        }
-
-        const body = bodyRows.map(tr => {
-          const cells = [...tr.querySelectorAll(":scope > td, :scope > th")];
-          return cells.map(c => clean(c.innerText));
-        }).filter(row => row.length);
-
+        const headerRows = theadRows.length ? theadRows : allRows.slice(0, Math.min(2, allRows.length));
+        const header = normalizeHeader(headerRows);
+        const bodyRows = theadRows.length
+          ? (table.querySelector("tbody") ? [...table.querySelector("tbody").querySelectorAll(":scope > tr")] : allRows.slice(theadRows.length))
+          : allRows.slice(headerRows.length);
+        const body = bodyRows.map(tr => [...tr.querySelectorAll(":scope > td, :scope > th")].map(c => clean(c.innerText))).filter(r => r.length);
         if (!header.length || !body.length) continue;
 
-        // Some tables expose duplicated/empty header cells. Keep the real
-        // labels such as Rank, TeamName, UID, Kill, Headshot, etc.
         const h = header.join(" | ").toLowerCase();
-
         let score = body.length * 4 + header.length * 2;
-
         if (wantedSection === "Team Data") {
           if (/\brank\b/.test(h)) score += 25;
-          if (/team ?name|teamname/.test(h)) score += 35;
-          if (/team ?id|match ?id/.test(h)) score += 25;
-          if (/score|survival|damage|kill|headshot/.test(h)) score += 30;
-          if (/nickname|uid|player/.test(h)) score -= 15;
+          if (/team ?name|teamname/.test(h)) score += 40;
+          if (/team ?id|match ?id/.test(h)) score += 20;
+          if (/score|survival|damage|kill|headshot/.test(h)) score += 25;
+          if (/nickname|uid|player/.test(h)) score -= 20;
         } else {
           if (/\brank\b/.test(h)) score += 15;
           if (/nickname|player ?name|playername/.test(h)) score += 40;
-          if (/\buid\b|player ?id/.test(h)) score += 30;
+          if (/\buid\b|player ?id/.test(h)) score += 25;
           if (/team ?name|teamname/.test(h)) score += 10;
-          if (/kill|headshot|survival|revival|rescue|damage/.test(h)) score += 30;
+          if (/kill|headshot|survival|revival|rescue|damage/.test(h)) score += 25;
         }
-
         if (header.length >= 5) score += 10;
-
-        if (score > bestScore) {
-          bestScore = score;
-          best = [header, ...body];
-        }
+        if (score > bestScore) { bestScore = score; best = [header, ...body]; }
       }
-
       return best || [];
     }, section);
 
-    if (matrix.length >= 2) return matrix;
-    await page.waitForTimeout(60);
+    if (matrix.length >= 2) return normalizeMatrix(matrix, section === "Team Data" ? "team" : "player");
+    await page.waitForTimeout(50);
   }
-
   return [];
 }
 
-async function refreshCurrentMatch() {
-  if (!page || !lastResult?.sourceUrl || liveRefreshing) return null;
+async function installLiveObserver(page) {
+  await page.evaluate(() => {
+    window.__statsVersion = 0;
+    window.__statsObserverInstalled = true;
+    window.__statsSuspend = false;
+    clearTimeout(window.__statsMutationTimer);
+    window.__statsMutationTimer = null;
+    window.__statsObserver?.disconnect();
 
-  liveRefreshing = true;
+    const bump = () => {
+      if (window.__statsSuspend) return;
+      clearTimeout(window.__statsMutationTimer);
+      window.__statsMutationTimer = setTimeout(() => {
+        window.__statsVersion++;
+      }, 90);
+    };
+
+    const observer = new MutationObserver(bump);
+    observer.observe(document.body, {
+      subtree: true,
+      childList: true,
+      characterData: true
+    });
+    window.__statsObserver = observer;
+  });
+}
+
+async function refreshSnapshot() {
+  if (!page || !lastResult) return null;
+
+  await page.evaluate(() => { window.__statsSuspend = true; }).catch(() => {});
   try {
-    // The official MatchStats updates its displayed values after a page
-    // reload. Reload the exact View URL instead of searching the MatchID again.
-    await page.goto(lastResult.sourceUrl, {
-      waitUntil: "domcontentloaded",
-      timeout: 10000
-    }).catch(() => {});
-
-    await page.waitForTimeout(120);
-
     const team = await extractSection(page, "Team Data");
     const player = await extractSection(page, "Player Data");
-
-    if (team.length >= 2 || player.length >= 2) {
-      lastResult = {
-        ...lastResult,
-        sourceUrl: page.url() || lastResult.sourceUrl,
-        capturedAt: new Date().toISOString(),
-        teamData: team.length >= 2 ? team : lastResult.teamData,
-        playerData: player.length >= 2 ? player : lastResult.playerData
-      };
+    const next = {
+      ...lastResult,
+      sourceUrl: page.url() || lastResult.sourceUrl,
+      capturedAt: new Date().toISOString(),
+      teamData: team.length >= 2 ? team : lastResult.teamData,
+      playerData: player.length >= 2 ? player : lastResult.playerData
+    };
+    if (!sameData(next, lastResult)) {
+      lastResult = next;
+      broadcast(lastResult);
+      return next;
     }
-
     return lastResult;
   } finally {
-    liveRefreshing = false;
+    await page.evaluate(() => { window.__statsSuspend = false; }).catch(() => {});
   }
 }
 
-function stopLivePolling() {
-  if (livePollTimer) {
-    clearInterval(livePollTimer);
-    livePollTimer = null;
-  }
-}
-
-function startLivePolling() {
-  stopLivePolling();
-  livePollTimer = setInterval(() => {
-    refreshCurrentMatch().catch(() => {});
-  }, 1000);
+async function liveWatchLoop() {
+  if (liveWatchTask) return;
+  liveWatchTask = (async () => {
+    while (page && lastResult) {
+      try {
+        const before = await page.evaluate(() => window.__statsVersion || 0);
+        await page.waitForFunction(v => (window.__statsVersion || 0) > v, before, { timeout: 0 });
+        await refreshSnapshot();
+      } catch {
+        break;
+      }
+    }
+  })().finally(() => { liveWatchTask = null; });
 }
 
 async function capture(matchId) {
-  stopLivePolling();
-
   const p = await getPage();
-  await p.bringToFront();
-
   await searchMatch(p, matchId);
-
-  await p.waitForLoadState("domcontentloaded", { timeout: 5000 }).catch(() => {});
-  await p.waitForTimeout(80);
+  await p.waitForLoadState("domcontentloaded", { timeout: 4000 }).catch(() => {});
+  await p.waitForTimeout(50);
 
   const team = await extractSection(p, "Team Data");
   const player = await extractSection(p, "Player Data");
+  if (!team.length && !player.length) throw new Error("A página View abriu, mas nenhuma tabela Team Data/Player Data foi capturada.");
 
-  if (!team.length && !player.length) {
-    throw new Error("A página View abriu, mas nenhuma tabela Team Data/Player Data foi capturada.");
-  }
-
-  const result = {
+  lastResult = {
     matchId: String(matchId),
     sourceUrl: p.url(),
     capturedAt: new Date().toISOString(),
@@ -460,80 +399,55 @@ async function capture(matchId) {
     playerData: player
   };
 
-  lastResult = result;
-  startLivePolling();
-  return result;
+  await installLiveObserver(p);
+  liveWatchLoop();
+  return lastResult;
 }
 
-
-app.get("/api/refresh", async (req, res) => {
+app.get("/api/events", (req, res) => {
   const matchId = String(req.query?.matchId || "").trim();
-
-  if (!/^\d+$/.test(matchId)) {
-    return res.status(400).json({ ok: false, error: "O MatchID deve conter apenas números." });
+  if (!lastResult || !/^\d+$/.test(matchId) || String(lastResult.matchId) !== matchId) {
+    return res.status(409).end();
   }
 
-  if (!lastResult || String(lastResult.matchId) !== matchId) {
-    return res.status(409).json({ ok: false, error: "Nenhuma captura ativa para este MatchID." });
-  }
-
-  try {
-    // Return the latest server-side snapshot. The background poller is
-    // already refreshing the official View every second.
-    return res.json({ ok: true, result: lastResult });
-  } catch (e) {
-    return res.status(500).json({
-      ok: false,
-      error: e?.message || "Falha na atualização."
-    });
-  }
+  res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
+  res.setHeader("Cache-Control", "no-cache, no-transform");
+  res.setHeader("Connection", "keep-alive");
+  res.flushHeaders?.();
+  res.write(`data: ${JSON.stringify({ ok: true, result: lastResult })}\n\n`);
+  sseClients.add(res);
+  req.on("close", () => sseClients.delete(res));
 });
 
-
 app.get("/api/health", (req, res) => {
-  res.json({ ok: true, version: "1.0.11", busy, hasBrowser: !!browser });
+  res.json({ ok: true, version: "1.0.12", busy, hasBrowser: !!browser, live: !!liveWatchTask });
 });
 
 app.post("/api/capture", async (req, res) => {
   const matchId = String(req.body?.matchId || "").trim();
-
-  if (!/^\d+$/.test(matchId)) {
-    return res.status(400).json({ ok: false, error: "O MatchID deve conter apenas números." });
-  }
-
-  if (busy) {
-    return res.status(409).json({ ok: false, error: "Já existe uma captura em andamento. Aguarde alguns segundos." });
-  }
+  if (!/^\d+$/.test(matchId)) return res.status(400).json({ ok: false, error: "O MatchID deve conter apenas números." });
+  if (busy) return res.status(409).json({ ok: false, error: "Já existe uma captura em andamento. Aguarde alguns segundos." });
 
   busy = true;
   const started = Date.now();
-
   try {
     const result = await capture(matchId);
     result.elapsedMs = Date.now() - started;
     lastResult = result;
     res.json({ ok: true, result });
   } catch (e) {
-    res.status(500).json({
-      ok: false,
-      error: e?.message || "Falha na captura.",
-      elapsedMs: Date.now() - started
-    });
+    res.status(500).json({ ok: false, error: e?.message || "Falha na captura.", elapsedMs: Date.now() - started });
   } finally {
     busy = false;
   }
 });
 
-app.get("/api/last", (req, res) => {
-  res.json({ ok: true, result: lastResult });
-});
+app.get("/api/last", (req, res) => res.json({ ok: true, result: lastResult }));
 
-app.listen(PORT, "0.0.0.0", () => {
-  console.log(`Stats Engine 1.0.10 running on port ${PORT}`);
-});
+app.listen(PORT, "0.0.0.0", () => console.log(`Stats Engine 1.0.12 running on port ${PORT}`));
 
 process.on("SIGTERM", async () => {
-  stopLivePolling();
+  for (const res of sseClients) { try { res.end(); } catch {} }
   try { await browser?.close(); } catch {}
   process.exit(0);
 });
