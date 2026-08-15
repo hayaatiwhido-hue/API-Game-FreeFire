@@ -1,310 +1,148 @@
-const express = require("express");
-const { chromium } = require("playwright");
+import express from 'express';
+import { chromium } from 'playwright';
 
 const app = express();
-app.use(express.json({ limit: "1mb" }));
-app.use(express.static(__dirname));
-
 const PORT = process.env.PORT || 10000;
-const MATCHSTATS_URL = "https://matchstats.us.ffesports.com/";
-const VERSION = "1.0.3";
-let activeJob = null;
+const MATCHSTATS_URL = process.env.MATCHSTATS_URL || 'https://matchstats.us.ffesports.com/match';
+app.use(express.json({limit:'1mb'}));
+app.use(express.static('.'));
+app.get('/', (req,res)=>res.sendFile(new URL('./index.html', import.meta.url).pathname));
 
-const cleanText = v => String(v ?? "").replace(/\s+/g, " ").trim();
-
-async function visible(locator) {
-  try { return await locator.isVisible(); } catch { return false; }
+let browserPromise;
+function getBrowser(){
+  if(!browserPromise) browserPromise = chromium.launch({headless:true});
+  return browserPromise;
 }
 
-async function allFrames(page) {
-  return page.frames();
-}
+const norm = v => String(v ?? '').replace(/\\s+/g,' ').trim();
+const normId = v => String(v ?? '').replace(/\\D/g,'');
 
-async function frameText(frame) {
-  return frame.locator("body").innerText().catch(() => "");
-}
+async function clickViewForMatch(page, matchId){
+  const target = normId(matchId);
+  await page.goto(MATCHSTATS_URL, {waitUntil:'domcontentloaded', timeout:60000});
+  await page.waitForTimeout(1200);
 
-async function findSearchInput(page) {
-  const selectors = [
-    'input[type="search"]',
-    'input[placeholder*="search" i]',
-    'input[placeholder*="match" i]',
-    'input[name*="search" i]',
-    'input[name*="match" i]',
-    'input.form-control'
-  ];
-  for (const frame of await allFrames(page)) {
-    for (const selector of selectors) {
-      const loc = frame.locator(selector);
-      const n = await loc.count().catch(() => 0);
-      for (let i = 0; i < n; i++) if (await visible(loc.nth(i))) return loc.nth(i);
+  const frames = () => page.frames();
+  // Find the main search input by placeholder/name/nearby text.
+  let input = null;
+  for(const f of frames()){
+    const candidates = f.locator('input');
+    const n = await candidates.count().catch(()=>0);
+    for(let i=0;i<n;i++){
+      const el=candidates.nth(i);
+      const meta = await el.evaluate(e=>({ph:e.placeholder||'',name:e.name||'',type:e.type||'',aria:e.getAttribute('aria-label')||''})).catch(()=>({}));
+      const s=JSON.stringify(meta).toLowerCase();
+      if(s.includes('match') || s.includes('name') || meta.type==='text' || meta.type==='search') { input=el; break; }
     }
-    const inputs = frame.locator("input");
-    const count = await inputs.count().catch(() => 0);
-    for (let i = 0; i < count; i++) {
-      const el = inputs.nth(i);
-      if (!await visible(el)) continue;
-      const type = (await el.getAttribute("type").catch(() => "")) || "";
-      if (!["hidden", "button", "submit", "checkbox", "radio"].includes(type)) return el;
-    }
+    if(input) break;
   }
-  return null;
-}
-
-async function clickSearch(page) {
-  const selectors = [
-    'button:has-text("Search")', 'a:has-text("Search")',
-    'button[aria-label*="search" i]', 'button[title*="search" i]',
-    '.fa-search', '.glyphicon-search', 'i[class*="search" i]'
-  ];
-  for (const frame of await allFrames(page)) {
-    for (const selector of selectors) {
-      const loc = frame.locator(selector);
-      const n = await loc.count().catch(() => 0);
-      for (let i = 0; i < n; i++) if (await visible(loc.nth(i))) {
-        await loc.nth(i).click({ timeout: 5000 }).catch(() => {});
-        return true;
-      }
-    }
-  }
-  return false;
-}
-
-async function waitForMatch(page, matchId) {
-  const end = Date.now() + 18000;
-  while (Date.now() < end) {
-    for (const frame of await allFrames(page)) {
-      const body = await frameText(frame);
-      if (body.includes(String(matchId))) return true;
-    }
-    await page.waitForTimeout(350);
-  }
-  return false;
-}
-
-async function elementLabel(el) {
-  return cleanText([
-    await el.innerText().catch(() => ""),
-    await el.textContent().catch(() => ""),
-    await el.getAttribute("title").catch(() => ""),
-    await el.getAttribute("aria-label").catch(() => ""),
-    await el.getAttribute("value").catch(() => ""),
-    await el.getAttribute("data-original-title").catch(() => "")
-  ].join(" "));
-}
-
-async function clickView(page, matchId) {
-  // 1) Procura literalmente o botão/link View em TODAS as frames.
-  const candidates = [
-    'button', 'a', 'input[type="button"]', 'input[type="submit"]',
-    '[role="button"]', '[title]', '[aria-label]'
-  ];
-  for (const frame of await allFrames(page)) {
-    for (const selector of candidates) {
-      const loc = frame.locator(selector);
-      const n = await loc.count().catch(() => 0);
-      for (let i = 0; i < n; i++) {
-        const el = loc.nth(i);
-        if (!await visible(el)) continue;
-        const label = await elementLabel(el);
-        if (/^view$/i.test(label) || /\bview\b/i.test(label)) {
-          const before = page.url();
-          await el.scrollIntoViewIfNeeded().catch(() => {});
-          const href = await el.getAttribute("href").catch(() => null);
-          await el.click({ timeout: 8000 }).catch(async () => {
-            await el.evaluate(node => node.click()).catch(() => {});
-          });
-          await page.waitForTimeout(1200);
-          return { ok: true, method: "view-text", href, before, after: page.url(), label };
-        }
-      }
-    }
-  }
-
-  // 2) Procura a linha de resultado. O MatchStats nem sempre coloca o MatchID
-  // no texto da célula; nesse caso usamos a linha com a data/colunas e o último
-  // grupo de controles, priorizando o controle que parece View.
-  for (const frame of await allFrames(page)) {
-    const rows = frame.locator("tr");
-    const n = await rows.count().catch(() => 0);
-    for (let i = 0; i < n; i++) {
-      const row = rows.nth(i);
-      if (!await visible(row)) continue;
-      const txt = cleanText(await row.innerText().catch(() => ""));
-      const controls = row.locator('button,a,input[type="button"],input[type="submit"],[role="button"]');
-      const cc = await controls.count().catch(() => 0);
-      if (!cc) continue;
-      // Resultado do MatchStats possui uma coluna Operation; ela normalmente é a última.
-      for (let j = 0; j < cc; j++) {
-        const c = controls.nth(j);
-        if (!await visible(c)) continue;
-        const label = await elementLabel(c);
-        if (/view/i.test(label)) {
-          const href = await c.getAttribute("href").catch(() => null);
-          await c.click({ timeout: 8000 }).catch(async () => await c.evaluate(node => node.click()).catch(() => {}));
-          await page.waitForTimeout(1200);
-          return { ok: true, method: "row-view", href, rowText: txt.slice(0, 500), label };
-        }
-      }
-      // Se a linha contém uma data típica e não achamos o texto View, tente o primeiro controle da Operation.
-      if (/\d{2}-\d{2}-\d{4}/.test(txt) && cc) {
-        const c = controls.nth(0);
-        const href = await c.getAttribute("href").catch(() => null);
-        await c.click({ timeout: 8000 }).catch(async () => await c.evaluate(node => node.click()).catch(() => {}));
-        await page.waitForTimeout(1200);
-        return { ok: true, method: "row-first-control", href, rowText: txt.slice(0, 500), label: await elementLabel(c) };
-      }
-    }
-  }
-
-  // 3) Fallback por links: se o href aponta para a página de detalhe, navega diretamente.
-  for (const frame of await allFrames(page)) {
-    const links = frame.locator("a[href]");
-    const n = await links.count().catch(() => 0);
-    for (let i = 0; i < n; i++) {
-      const a = links.nth(i);
-      if (!await visible(a)) continue;
-      const href = await a.getAttribute("href").catch(() => "");
-      const label = await elementLabel(a);
-      if (/view|matchdetail|matchd/i.test(`${label} ${href}`)) {
-        try {
-          if (href && !href.startsWith("javascript:")) {
-            const url = new URL(href, page.url()).href;
-            await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30000 }).catch(() => {});
-            await page.waitForTimeout(1000);
-            return { ok: true, method: "href-fallback", href: url, label };
-          }
-        } catch {}
-      }
-    }
-  }
-
-  throw new Error(`A partida ${matchId} foi localizada, mas o controle View não pôde ser acionado. O MatchStats pode estar usando um componente/iframe diferente.`);
-}
-
-async function extractTables(page) {
-  const all = [];
-  for (const frame of await allFrames(page)) {
-    const tables = await frame.locator("table:visible").evaluateAll(tables => {
-      const norm = v => String(v ?? "").replace(/\s+/g, " ").trim();
-      return tables.map((table, index) => {
-        const trs = [...table.querySelectorAll("tr")];
-        const rows = trs.map(tr => [...tr.querySelectorAll("th,td")].map(td => norm(td.innerText))).filter(r => r.some(Boolean));
-        if (!rows.length) return null;
-        let headers = rows[0], data = rows.slice(1);
-        const head = table.querySelector("thead tr");
-        if (head) headers = [...head.querySelectorAll("th,td")].map(td => norm(td.innerText));
-        const bodyRows = [...table.querySelectorAll("tbody tr")];
-        if (bodyRows.length) data = bodyRows.map(tr => [...tr.querySelectorAll("th,td")].map(td => norm(td.innerText)));
-        return { index, headers, rows: data };
-      }).filter(Boolean);
-    }).catch(() => []);
-    all.push(...tables);
-  }
-  return all;
-}
-
-function classifyTables(tables) {
-  const team = [], player = [], other = [];
-  for (const table of tables) {
-    const h = table.headers.join(" | ").toLowerCase();
-    if (/team id|team name|number of team|survival score|rescue members/.test(h)) team.push(table);
-    else if (/player|uid|nickname|headshot|revival|damage|kill|headshot accuracy|on target/.test(h)) player.push(table);
-    else other.push(table);
-  }
-  return { team, player, other };
-}
-
-async function clickTabLike(page, patterns) {
-  for (const frame of await allFrames(page)) {
-    const loc = frame.locator('a,button,[role="button"],li');
-    const n = await loc.count().catch(() => 0);
-    for (let i = 0; i < n; i++) {
-      const el = loc.nth(i);
-      if (!await visible(el)) continue;
-      const label = await elementLabel(el);
-      if (patterns.some(p => p.test(label))) {
-        await el.click({ timeout: 7000 }).catch(async () => await el.evaluate(node => node.click()).catch(() => {}));
-        await page.waitForTimeout(900);
-        return { ok: true, label };
-      }
-    }
-  }
-  return { ok: false };
-}
-
-async function scrapeMatch(matchId) {
-  const browser = await chromium.launch({ headless: true, args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"] });
-  const context = await browser.newContext({ viewport: { width: 1440, height: 1000 }, acceptDownloads: true });
-  const page = await context.newPage();
-  page.setDefaultTimeout(10000);
-
-  const result = { version: VERSION, matchId: String(matchId), source: MATCHSTATS_URL, capturedAt: new Date().toISOString(), match: {}, teamData: [], playerData: [], tables: [], downloads: [], diagnostics: {} };
-
-  try {
-    try { await page.goto(MATCHSTATS_URL, { waitUntil: "commit", timeout: 30000 }); }
-    catch (e) { if (!page.url().includes("matchstats.us.ffesports.com")) throw e; }
-    await page.waitForLoadState("domcontentloaded", { timeout: 15000 }).catch(() => {});
-    await page.waitForTimeout(1800);
-
-    const input = await findSearchInput(page);
-    if (!input) throw new Error("Campo de pesquisa do MatchStats não foi encontrado.");
-    await input.fill(String(matchId));
-    await clickSearch(page);
-    await input.press("Enter").catch(() => {});
-    const found = await waitForMatch(page, matchId);
-    if (!found) throw new Error(`O MatchID ${matchId} não apareceu nos resultados do MatchStats.`);
+  if(input){
+    await input.fill(target);
+    await input.press('Enter').catch(()=>{});
+    await page.waitForTimeout(1200);
+    // Some Angular inputs only react to input/change.
+    await input.evaluate(e=>{e.dispatchEvent(new Event('input',{bubbles:true}));e.dispatchEvent(new Event('change',{bubbles:true}));}).catch(()=>{});
     await page.waitForTimeout(1000);
-
-    const view = await clickView(page, matchId);
-    result.diagnostics.view = view;
-    await page.waitForTimeout(1500);
-
-    let tables = await extractTables(page);
-    let classified = classifyTables(tables);
-
-    // O detalhe pode apresentar TeamData primeiro e PlayerData em uma aba/ícone separado.
-    if (!classified.player.length) {
-      const playerClick = await clickTabLike(page, [/player\s*data/i, /^player$/i]);
-      result.diagnostics.playerTab = playerClick;
-      const after = await extractTables(page);
-      const c2 = classifyTables(after);
-      if (c2.player.length) { classified.player = c2.player; tables = after; }
-    }
-
-    // Volta/abre Team Data caso o clique de Player Data tenha trocado a área.
-    if (!classified.team.length) {
-      const teamClick = await clickTabLike(page, [/team\s*data/i, /^team$/i]);
-      result.diagnostics.teamTab = teamClick;
-      const after = await extractTables(page);
-      const c2 = classifyTables(after);
-      if (c2.team.length) { classified.team = c2.team; tables = after; }
-    }
-
-    result.tables = tables;
-    result.teamData = classified.team;
-    result.playerData = classified.player;
-    result.match = { url: page.url(), title: await page.title().catch(() => ""), textPreview: (await page.locator("body").innerText().catch(() => "")).slice(0, 7000) };
-    result.diagnostics = { ...result.diagnostics, finalUrl: page.url(), tablesFound: tables.length, teamTables: classified.team.length, playerTables: classified.player.length, otherTables: classified.other.length, frames: page.frames().length, pageReady: true };
-
-    if (!classified.team.length && !classified.player.length) throw new Error("A página View abriu, mas nenhum TeamData/PlayerData foi encontrado. Veja o diagnóstico para identificar a estrutura carregada.");
-    return result;
-  } finally {
-    await context.close().catch(() => {});
-    await browser.close().catch(() => {});
   }
+
+  // Look for the ID in text, hrefs, data attributes, row HTML, and then click a View control in its row.
+  for(let pass=0; pass<4; pass++){
+    for(const f of frames()){
+      const rows = f.locator('tr');
+      const count = await rows.count().catch(()=>0);
+      for(let i=0;i<count;i++){
+        const row=rows.nth(i);
+        const html=await row.evaluate(e=>e.outerHTML).catch(()=> '');
+        if(normId(html).includes(target)){
+          const view=row.getByText(/^View$/i).first();
+          if(await view.count().catch(()=>0)) { await view.click({force:true}); return; }
+          const buttons=row.locator('button,a,[role="button"]');
+          const bn=await buttons.count().catch(()=>0);
+          for(let j=0;j<bn;j++){
+            const b=buttons.nth(j); const t=norm(await b.innerText().catch(()=>''));
+            const h=await b.getAttribute('href').catch(()=>null);
+            if(/^view$/i.test(t) || /view/i.test(h||'')){ await b.click({force:true}); return; }
+          }
+        }
+      }
+      const links=f.locator('a'); const ln=await links.count().catch(()=>0);
+      for(let i=0;i<ln;i++){
+        const a=links.nth(i); const h=await a.getAttribute('href').catch(()=>null); const txt=norm(await a.innerText().catch(()=>''));
+        if(normId(h||'').includes(target) && /view/i.test(txt+' '+(h||''))){await a.click({force:true}); return;}
+      }
+    }
+    // Pagination fallback: click next controls if available and not disabled.
+    let advanced=false;
+    for(const f of frames()){
+      const controls=f.locator('button,a,[role="button"]'); const n=await controls.count().catch(()=>0);
+      for(let i=0;i<n;i++){
+        const c=controls.nth(i); const txt=norm(await c.innerText().catch(()=>'')); const aria=await c.getAttribute('aria-label').catch(()=>null); const dis=await c.isDisabled().catch(()=>false);
+        if(dis) continue;
+        if(/^(next|>|›|»)$/i.test(txt) || /next/i.test(aria||'')) { await c.click({force:true}).catch(()=>{}); await page.waitForTimeout(700); advanced=true; break; }
+      }
+      if(advanced) break;
+    }
+    if(!advanced) break;
+  }
+  throw new Error(`MatchID ${target} foi localizado na página, mas o botão View não pôde ser acionado. Estrutura do MatchStats pode ter mudado.`);
 }
 
-app.get("/api/health", (_req, res) => res.json({ ok: true, version: VERSION, engine: "Playwright", playwright: require("playwright/package.json").version }));
+async function extractTables(page){
+  return await page.evaluate(() => {
+    const clean=s=>String(s??'').replace(/\\s+/g,' ').trim();
+    const tables=[...document.querySelectorAll('table')];
+    return tables.map((table,index)=>{
+      const rows=[...table.querySelectorAll('tr')];
+      if(!rows.length) return null;
+      let headers=[...rows[0].querySelectorAll('th,td')].map(x=>clean(x.innerText));
+      const body=rows.slice(1).map(r=>[...r.querySelectorAll('th,td')].map(x=>clean(x.innerText))).filter(r=>r.length);
+      return {index, caption:clean(table.querySelector('caption')?.innerText), headers, rows:body};
+    }).filter(Boolean);
+  });
+}
 
-app.post("/api/match", async (req, res) => {
-  const matchId = String(req.body?.matchId || "").trim();
-  if (!/^\d{5,30}$/.test(matchId)) return res.status(400).json({ ok: false, error: "Informe um MatchID numérico válido." });
-  if (activeJob) return res.status(429).json({ ok: false, error: "O Engine já está processando uma partida. Aguarde a captura terminar." });
-  activeJob = matchId;
-  try { res.json({ ok: true, data: await scrapeMatch(matchId) }); }
-  catch (error) { res.status(502).json({ ok: false, version: VERSION, matchId, error: String(error?.message || error), hint: "A V1.0.3 amplia a procura do View para frames, controles, links e coluna Operation." }); }
-  finally { activeJob = null; }
+function classify(tables){
+  const out={teamData:[],playerData:[]};
+  for(const t of tables){
+    const blob=(t.caption+' '+t.headers.join(' ')).toLowerCase();
+    if(blob.includes('player')) out.playerData.push(t);
+    else if(blob.includes('team') || blob.includes('match rank') || blob.includes('survival score')) out.teamData.push(t);
+  }
+  if(!out.teamData.length) out.teamData=tables.filter(t=>/team id|team name|survival score|match rank/i.test(t.headers.join(' ')));
+  if(!out.playerData.length) out.playerData=tables.filter(t=>/player id|player name|nickname|kills|damage|headshot/i.test(t.headers.join(' ')) && !out.teamData.includes(t));
+  return out;
+}
+
+app.post('/api/capture', async (req,res)=>{
+  const matchId=normId(req.body?.matchId);
+  if(!matchId) return res.status(400).json({ok:false,error:'Informe um MatchID válido.'});
+  const started=Date.now();
+  let context;
+  try{
+    const browser=await getBrowser();
+    context=await browser.newContext({viewport:{width:1440,height:1000}, userAgent:'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/131 Safari/537.36'});
+    const page=await context.newPage();
+    page.setDefaultTimeout(15000);
+    await clickViewForMatch(page,matchId);
+    await page.waitForLoadState('domcontentloaded').catch(()=>{});
+    await page.waitForTimeout(1200);
+    // If View opened a new route, keep waiting for data tables.
+    for(let i=0;i<10;i++){
+      const n=await page.locator('table').count().catch(()=>0);
+      if(n>0) break;
+      await page.waitForTimeout(600);
+    }
+    const tables=await extractTables(page);
+    const classified=classify(tables);
+    const title=norm(await page.title().catch(()=>''));
+    const currentUrl=page.url();
+    if(!tables.length) throw new Error('A página View foi aberta, mas nenhum quadro de dados foi encontrado.');
+    res.json({ok:true,matchId,title,currentUrl,teamData:classified.teamData,playerData:classified.playerData,allTables:tables,elapsedMs:Date.now()-started});
+  }catch(e){
+    res.status(502).json({ok:false,error:e?.message||String(e),elapsedMs:Date.now()-started});
+  }finally{ if(context) await context.close().catch(()=>{}); }
 });
 
-app.listen(PORT, () => console.log(`Stats Engine ${VERSION} running on port ${PORT}`));
+app.get('/api/health',(req,res)=>res.json({ok:true,version:'1.0.5'}));
+process.on('SIGTERM',async()=>{if(browserPromise){const b=await browserPromise.catch(()=>null); await b?.close().catch(()=>{});} process.exit(0);});
+app.listen(PORT,()=>console.log(`Stats Engine 1.0.5 listening on ${PORT}`));
