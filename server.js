@@ -445,11 +445,12 @@ function stopLivePolling() {
 
 function startLivePolling() {
   stopLivePolling();
-  // Interval solicitado: 10 ms. refreshCurrentMatch possui um bloqueio
-  // interno para impedir duas recargas do MatchStats ao mesmo tempo.
+  // Intervalo de verificação do servidor: 1 ms.
+  // O bloqueio interno impede atualizações simultâneas; o intervalo define
+  // a frequência máxima com que o servidor tenta iniciar uma atualização.
   livePollTimer = setInterval(() => {
     refreshCurrentMatch().catch(() => {});
-  }, 10);
+  }, 1);
 }
 
 async function capture(matchId) {
@@ -497,7 +498,7 @@ app.get("/api/refresh", async (req, res) => {
 
   try {
     // Return the latest server-side snapshot. The background poller checks
-    // the official View on a 10 ms interval, with an in-flight guard so
+    // the official View on a 1 ms interval, with an in-flight guard so
     // refreshes never overlap.
     return res.json({ ok: true, result: lastResult });
   } catch (e) {
@@ -510,7 +511,7 @@ app.get("/api/refresh", async (req, res) => {
 
 
 app.get("/api/health", (req, res) => {
-  res.json({ ok: true, version: "2.1.2", busy, hasBrowser: !!browser });
+  res.json({ ok: true, version: "2.1.4", busy, hasBrowser: !!browser });
 });
 
 app.post("/api/capture", async (req, res) => {
