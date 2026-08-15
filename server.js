@@ -3,12 +3,11 @@ const { chromium } = require("playwright");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const MATCHSTATS_URL =
-  process.env.MATCHSTATS_URL || "https://matchstats.us.ffesports.com/";
+const MATCHSTATS_URL = process.env.MATCHSTATS_URL || "https://matchstats.us.ffesports.com/";
 const INTERVAL_MS = 1000;
 
 app.use(express.json());
-app.use(express.static("public"));
+app.use(express.static("."));
 
 let browser = null;
 let page = null;
@@ -26,14 +25,12 @@ let state = {
   data: null
 };
 
-function cleanText(value) {
-  return String(value || "").replace(/\s+/g, " ").trim();
+function cleanText(v) {
+  return String(v || "").replace(/\s+/g, " ").trim();
 }
 
-function comparable(snapshot) {
-  return snapshot
-    ? JSON.stringify(snapshot.tables) + "\n" + snapshot.bodyText
-    : "";
+function comparable(s) {
+  return s ? JSON.stringify(s.tables) + "\n" + s.bodyText : "";
 }
 
 async function ensureBrowser() {
@@ -46,30 +43,23 @@ async function ensureBrowser() {
 
   page = await browser.newPage({
     viewport: { width: 1440, height: 1000 },
-    userAgent:
-      "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/131 Safari/537.36"
+    userAgent: "Mozilla/5.0 StatsEngine MatchStats Monitor"
   });
 }
 
 async function snapshot() {
-  return page.evaluate(() => {
-    const tables = [...document.querySelectorAll("table")].map((table, index) => ({
+  return page.evaluate(() => ({
+    capturedAt: new Date().toISOString(),
+    title: document.title,
+    url: location.href,
+    tables: [...document.querySelectorAll("table")].map((table, index) => ({
       index,
       rows: [...table.querySelectorAll("tr")]
-        .map((tr) =>
-          [...tr.querySelectorAll("th,td")].map((td) => td.innerText.trim())
-        )
-        .filter((row) => row.length)
-    }));
-
-    return {
-      capturedAt: new Date().toISOString(),
-      title: document.title,
-      url: location.href,
-      tables,
-      bodyText: document.body.innerText
-    };
-  });
+        .map(tr => [...tr.querySelectorAll("th,td")].map(td => td.innerText.trim()))
+        .filter(row => row.length)
+    })),
+    bodyText: document.body.innerText
+  }));
 }
 
 async function locateMatchInput() {
@@ -77,7 +67,7 @@ async function locateMatchInput() {
     'input[placeholder*="Match ID" i]',
     'input[placeholder*="Match" i]',
     'input[type="search"]',
-    'input'
+    "input"
   ];
 
   for (const selector of selectors) {
@@ -107,7 +97,6 @@ async function searchMatch(matchId) {
 
 async function pollOnce() {
   if (!state.running || polling) return;
-
   polling = true;
 
   try {
@@ -184,24 +173,21 @@ app.post("/api/start", async (req, res) => {
   res.json(state);
 });
 
-app.post("/api/stop", async (_req, res) => {
+app.post("/api/stop", (_req, res) => {
   stopTimer();
   state.running = false;
   state.status = "PARADO";
   res.json(state);
 });
 
-app.get("/api/state", (_req, res) => {
-  res.json(state);
-});
+app.get("/api/state", (_req, res) => res.json(state));
 
 app.get("/health", (_req, res) => {
-  res.json({ ok: true, service: "stats-engine", intervalMs: INTERVAL_MS });
+  res.json({ ok: true, intervalMs: INTERVAL_MS });
 });
 
-app.listen(PORT, () => {
-  console.log(`Stats Engine rodando na porta ${PORT}`);
-  console.log(`MatchStats: ${MATCHSTATS_URL}`);
+app.listen(PORT, "0.0.0.0", () => {
+  console.log(`Stats Engine ativo na porta ${PORT}`);
 });
 
 process.on("SIGINT", async () => {

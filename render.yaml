@@ -2,8 +2,8 @@ services:
   - type: web
     name: stats-engine-matchstats
     runtime: docker
-    dockerfilePath: ./Dockerfile
     plan: free
+    dockerfilePath: ./Dockerfile
     envVars:
       - key: MATCHSTATS_URL
         value: https://matchstats.us.ffesports.com/

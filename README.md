@@ -1,46 +1,53 @@
-# Stats Engine v1.1 — teste de captura real
+# Stats Engine v1.2
+
+## Estrutura para envio pelo celular
+
+Todos os arquivos importantes estão diretamente na raiz:
+
+- index.html
+- server.js
+- package.json
+- Dockerfile
+- render.yaml
+- .dockerignore
+- README.md
+
+Não existe pasta `public`.
 
 ## Objetivo
 
-Primeira versão para validar somente o fluxo:
+Validar somente:
 
-MatchID → MatchStats oficial → navegador automatizado → dados reais → painel.
+MatchID real → MatchStats oficial → navegador Playwright → captura real → painel → atualização de 1 segundo.
 
-Não há dados genéricos ou fictícios no projeto.
+Nenhum dado fictício é incluído.
 
-## Hospedagem
+## Render
 
-A estrutura já contém `Dockerfile` e `render.yaml` para Render. O Render suporta Docker e pode reconstruir/reimplantar o serviço quando houver novos commits no repositório conectado. 
+O projeto usa Docker porque o Playwright precisa do navegador Chromium.
 
-O plano gratuito é apropriado para teste, mas possui limitações; o Render informa que serviços web gratuitos podem entrar em suspensão após 15 minutos sem atividade. 
+No Render:
+1. Crie um Web Service.
+2. Conecte o GitHub.
+3. Selecione o repositório.
+4. Runtime/Language: Docker.
+5. Dockerfile: `./Dockerfile`.
+6. O `CMD` do Dockerfile inicia o servidor.
 
-## Deploy pelo GitHub
+O `render.yaml` também pode ser usado como Blueprint.
 
-1. Crie um repositório no GitHub.
-2. Envie todos os arquivos deste ZIP para a raiz do repositório.
-3. No Render, escolha `New > Web Service`.
-4. Conecte o repositório.
-5. Selecione o runtime `Docker`.
-6. Use o plano Free para o primeiro teste.
-7. Faça o deploy.
+## GitHub pelo celular
 
-O `render.yaml` já deixa a URL do MatchStats configurada.
+Como o `index.html` está na raiz, você pode criar/enviar cada arquivo diretamente na raiz do repositório, sem precisar enviar a pasta `public`.
+
+## Atualização do código
+
+Com o repositório conectado ao Render, novos commits na branch configurada podem disparar novos deploys.
 
 ## Teste
 
-Abra a URL fornecida pelo Render e coloque um MatchID real.
+Abra a URL do serviço, coloque um MatchID real e clique em INICIAR.
 
-O painel mostra:
-- status da conexão;
-- quantidade de consultas;
-- quantidade de alterações detectadas;
-- horário da última atualização;
-- snapshot bruto realmente capturado pelo navegador.
+O painel mostra o snapshot bruto que o navegador automatizado capturou do MatchStats.
 
-## Atualização
-
-Depois do primeiro deploy, alterações no repositório conectado podem disparar novo deploy automaticamente.
-
-## Importante
-
-Esta fase deliberadamente não transforma o conteúdo em leaderboard ou cards. Primeiro valide que o MatchID real aparece no snapshot e que as alterações do MatchStats chegam ao painel. Depois disso, a camada de interpretação dos dados pode ser construída em cima da captura validada.
+Se aparecer erro de campo, navegação ou carregamento, o erro deve ser corrigido antes de transformar os dados em leaderboard, jogadores, kills etc.
