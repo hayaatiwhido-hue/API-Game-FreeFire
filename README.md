@@ -1,74 +1,68 @@
-# FFWS vMix MultiMatch Server 2.0
+# FFWS Stats Engine · Multi Match + vMix
 
-Servidor completo para capturar várias quedas pelo MatchID no MatchStats e distribuir dados para overlays HTML transparentes do vMix.
+Sistema para adicionar vários MatchIDs do MatchStats, acompanhar as quedas em tempo real e alimentar overlays para vMix.
 
-## O que foi incluído
+## O que foi adicionado
 
 - Vários MatchIDs ao mesmo tempo.
-- Seleção de uma queda específica.
-- Modo `TODAS AS QUEDAS`, somando as quedas adicionadas.
-- Team Data e Player Data mantendo a ordem dos campos configurados.
-- Correção do problema de deslocamento de coluna: o valor é associado pela posição real da célula da tabela, sem transformar Team Name em cabeçalho/linha anterior.
-- Observação DOM + ciclo de verificação configurado em 1 ms por padrão.
-- SSE para entregar mudanças aos overlays sem esperar o próximo ciclo visual.
-- Ranking da Queda persistente enquanto ativado.
-- TOPs individuais com entrada automática quando o líder/valor muda.
-- Ativar/desativar individualmente todas as overlays.
-- Botão TESTAR para qualquer overlay.
-- PNGs base prontos para substituir.
-- Modo de arte `complete` ou possibilidade de trocar para assets separados no `overlay-config.js`.
-- Arquivo separado para posições, campos extras, campeonato, sponsor, logos e fotos.
+- Seleção de **UMA QUEDA** ou **TODAS AS QUEDAS**.
+- No modo **TODAS AS QUEDAS**, Team Data e Player Data são somados por equipe/jogador.
+- Atualização do servidor programada em **1 ms**, com proteção para não executar duas leituras simultaneamente no mesmo MatchID.
+- Cabeçalhos Team Data e Player Data mantidos na ordem canônica e com correção do desalinhamento entre cabeçalho e dados.
+- Ranking da Queda: liga/desliga e fica persistente enquanto ativado.
+- TOPs: entram automaticamente quando o líder/valor muda.
+- Botão TESTAR para cada overlay.
+- Preview ao vivo dentro da interface principal.
+- Overlays para equipe e jogador, com animação de entrada/saída.
+- `overlay-config.js` para posição, campeonato, sponsor, texto extra e configurações visuais.
+- PNGs 1920×1080 prontos para substituir, todos na raiz do projeto.
+- `overlay-data.js` para mapear logos de equipes e fotos de jogadores.
 
 ## Overlays
 
 ### Equipes
-1. Ranking da Queda
-2. Equipe com mais Abates (KillerLeader / Kill)
-3. Top Dano (Damage)
-4. Headshots
-5. Top Assist. (Assist)
-6. Top Revival (Revival)
-7. Equipe Eliminada
+- `teamKills` — Equipe com mais Abates
+- `teamDamage` — Top Dano
+- `teamHeadshots` — Headshots
+- `teamAssist` — Top Assist.
+- `teamRevival` — Top Revival
+- `teamEliminated` — Equipe Eliminada, somente quando houver estado explícito de eliminado/morto nos dados disponíveis
+- `ranking` — Ranking da Queda
 
 ### Jogadores
-1. Player com mais Eliminações
-2. Player com maior Dano
-3. Player com mais Assistências
-4. Player que mais andou no Mapa
-5. Player com mais Headshots
-6. Player que mais foi derrubado
-7. Mais reviveu aliados
-8. Abate mais distante
+- `playerKills`
+- `playerDamage`
+- `playerAssist`
+- `playerMovingDistance`
+- `playerHeadshots`
+- `playerKnockDown`
+- `playerRescueMembers`
+- `playerMaximumKillDistance`
 
-## Abrir
+## URLs para vMix
 
-`/control.html`
+- `/overlay-ranking.html`
+- `/overlay-team-top.html?key=teamKills`
+- `/overlay-team-top.html?key=teamDamage`
+- `/overlay-team-top.html?key=teamHeadshots`
+- `/overlay-team-top.html?key=teamAssist`
+- `/overlay-team-top.html?key=teamRevival`
+- `/overlay-eliminated.html`
+- `/overlay-player-top.html?key=playerKills`
+- `/overlay-player-top.html?key=playerDamage`
+- `/overlay-player-top.html?key=playerAssist`
+- `/overlay-player-top.html?key=playerMovingDistance`
+- `/overlay-player-top.html?key=playerHeadshots`
+- `/overlay-player-top.html?key=playerKnockDown`
+- `/overlay-player-top.html?key=playerRescueMembers`
+- `/overlay-player-top.html?key=playerMaximumKillDistance`
 
-## vMix
+## Configuração das artes
 
-Use as URLs exibidas no próprio painel. Todas as overlays são HTML transparente e podem ser usadas como Browser Input.
+Edite apenas `overlay-config.js` para alterar posições e textos. Os PNGs podem ser substituídos mantendo os mesmos nomes.
 
-## Personalização
+Edite `overlay-data.js` para associar:
+- Team ID/Team Name → logo
+- Player ID/UID/Player Name → foto
 
-- `overlay-config.js`: posições, tamanho, animações, duração, textos e campos extras.
-- `overlay-data.js`: logos por Team ID/Team Name e fotos por Player ID/UID/Nickname.
-- `*.png`: artes completas baseadas no estilo das referências enviadas. Podem ser substituídas sem alterar o código.
-- ``: peças para montar uma overlay por assets.
-
-## Execução local
-
-```bash
-npm install
-npx playwright install chromium
-npm start
-```
-
-Depois abra `/control.html`.
-
-## Render
-
-O `Dockerfile` já instala Chromium para Playwright. O `render.yaml` usa `POLL_MS=1`.
-
-## Observação importante sobre 1 ms
-
-O servidor deixa o ciclo configurado em 1 ms, mas uma requisição HTTP/um navegador não consegue garantir fisicamente uma nova ida ao site oficial a cada 1 ms. Por isso o sistema usa MutationObserver + SSE: quando o MatchStats muda o DOM, a captura é disparada rapidamente e os overlays recebem o evento imediatamente.
+Tudo foi mantido na raiz principal para facilitar o upload pelo GitHub no celular.

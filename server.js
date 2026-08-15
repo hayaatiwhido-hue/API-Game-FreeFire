@@ -189,50 +189,215 @@ async function searchMatch(page, matchId) {
   throw new Error(`O MatchID ${id} não apareceu nos resultados do MatchStats.`);
 }
 
-async function clickTab(page,label){
-  const candidates=[page.getByText(label,{exact:true}),page.locator('[role="tab"]').filter({hasText:label}),page.locator('button').filter({hasText:label}),page.locator('a').filter({hasText:label})];
-  for(const c of candidates){for(let i=0;i<await c.count();i++){const el=c.nth(i);if(await el.isVisible().catch(()=>false)){await el.click({timeout:1200}).catch(()=>{});return true;}}}
+async function clickTab(page, label) {
+  const candidates = [
+    page.getByText(label, { exact: true }),
+    page.locator(`[role="tab"]`).filter({ hasText: label }),
+    page.locator(`button`).filter({ hasText: label }),
+    page.locator(`a`).filter({ hasText: label })
+  ];
+
+  for (const c of candidates) {
+    try {
+      const n = await c.count();
+      for (let i = 0; i < n; i++) {
+        const el = c.nth(i);
+        if (await el.isVisible()) {
+          await el.click({ timeout: 1500 });
+          return true;
+        }
+      }
+    } catch {}
+  }
   return false;
 }
 
 async function extractSection(page, section) {
-  await clickTab(page,section);
-  const type=section==='Team Data'?'team':'player';
-  const deadline=Date.now()+3000;
-  while(Date.now()<deadline){
-    const matrix=await page.evaluate((wanted)=>{
-      const clean=v=>String(v??'').replace(/\s+/g,' ').trim();
-      const tables=[...document.querySelectorAll('table')].filter(t=>{const r=t.getBoundingClientRect();return r.width>0&&r.height>0;});
-      function rowValues(tr){return [...tr.querySelectorAll(':scope > th, :scope > td')].map(c=>clean(c.innerText));}
-      function scoreHeader(values){
-        const text=values.join(' | '); let s=0;
-        const known=wanted==='Team Data'?/rank|team|equipe|score|survival|kill|damage|headshot|assist|point|id/i:/rank|player|nickname|nick|team|equipe|uid|id|score|survival|kill|damage|headshot|assist|knock|rescue|revive|moving|distance/i;
-        for(const v of values){if(!v)continue;if(known.test(v))s+=12;if(/^\d+(?:[.,]\d+)?$/.test(v))s-=20;else s+=2;}
-        if(/\brank\b/i.test(text))s+=30;if(wanted==='Team Data'&&/team\s*name|teamname/i.test(text))s+=35;if(wanted==='Player Data'&&/player\s*name|nickname|nick/i.test(text))s+=35;
-        return s;
+  await clickTab(page, section);
+  const deadline = Date.now() + 3500;
+
+  while (Date.now() < deadline) {
+    const matrix = await page.evaluate((wantedSection) => {
+      const clean = v => String(v ?? "").replace(/\s+/g, " ").trim();
+      const norm = v => clean(v).normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, "");
+      const isNumber = v => /^-?\d+(?:[.,]\d+)?$/.test(clean(v));
+
+      // ORDEM EXATA usada pelo MatchStats nas telas de referência.
+      // Não existe uma coluna artificial "Position"/"Team Position" entre Rank e Team ID.
+      const teamCanonical = [
+        "Match Rank", "Team ID", "Team Name", "Survival Score", "Kill", "Total Score", "BOOYAH!",
+        "Damage", "On Target", "Headshots", "Headshot Kill Rate", "Headshot Accuracy Rate", "Survival Time", "Revival"
+      ];
+      const playerCanonical = [
+        "Match Rank", "Team Name", "Player ID", "Player Name", "Kill", "Damage", "Assist", "On Target",
+        "Moving Distance", "Headshots", "Headshot Kill Rate", "Headshot Accuracy Rate", "Revival", "Revival Members",
+        "Knock Down", "Rescue Members", "Survival Time", "Maximum kill distance", "Operation"
+      ];
+
+      function expandRow(tr) {
+        const cells = [...tr.querySelectorAll(":scope > th, :scope > td")];
+        const out = [];
+        let col = 0;
+        for (const cell of cells) {
+          while (out[col] !== undefined) col++;
+          const text = clean(cell.innerText);
+          const cs = Math.max(1, Number(cell.getAttribute("colspan") || 1));
+          for (let c = 0; c < cs; c++) out[col + c] = text;
+          col += cs;
+        }
+        return out;
       }
-      let best=null,bestScore=-1;
-      for(const table of tables){
-        const all=[...table.querySelectorAll('tr')]; if(!all.length)continue;
-        const thead=[...table.querySelectorAll('thead > tr')];
-        let headerRows=thead.length?thead:all.slice(0,Math.min(3,all.length));
-        let header=headerRows.map(rowValues).sort((a,b)=>scoreHeader(b)-scoreHeader(a))[0]||[];
-        const headerPos=all.findIndex(tr=>JSON.stringify(rowValues(tr))===JSON.stringify(header));
-        const body=(thead.length? [...(table.querySelector('tbody')?.querySelectorAll(':scope > tr')||[])]:all.slice(Math.max(0,headerPos)+1))
-          .map(rowValues).filter(r=>r.length);
-        if(!header.length||!body.length)continue;
-        let s=body.length*4+header.length*2;
-        const h=header.join(' | ').toLowerCase();
-        if(/\brank\b/.test(h))s+=25;
-        if(wanted==='Team Data'){if(/team ?name|teamname/.test(h))s+=40;if(/team ?id/.test(h))s+=20;if(/score|survival|damage|kill|headshot/.test(h))s+=25;if(/nickname|uid|player/.test(h))s-=20;}
-        else {if(/nickname|player ?name|playername/.test(h))s+=40;if(/uid|player ?id/.test(h))s+=25;if(/team ?name|teamname/.test(h))s+=10;if(/kill|headshot|survival|revival|rescue|damage|moving|distance/.test(h))s+=25;}
-        if(header.length>=5)s+=10;
-        if(s>bestScore){bestScore=s;best=[header,...body];}
+
+      function looksLikeHeader(row, tr) {
+        const raw = row.map(clean).filter(Boolean);
+        const vals = raw.map(norm);
+        if (!vals.length) return false;
+
+        // IMPORTANTE: uma linha como
+        // "1 | 2 | - | TEAM RAY | 0 | 5 | 5" contém palavras como Team Name
+        // na tabela original em algumas versões do MatchStats, mas continua
+        // sendo uma LINHA DE DADOS. Nunca use dados como cabeçalho.
+        const hasNumericData = raw.some(v => isNumber(v) || /^\d+\s*\/\s*\d+$/.test(v));
+        if (hasNumericData) return false;
+
+        const words = new Set([
+          "rank", "position", "posicao", "teamname", "team", "teamid", "playername", "nickname", "player", "uid",
+          "totalscore", "survivalscore", "kill", "kills", "headshot", "headshots", "damage", "revival", "rescue",
+          "booyah", "abates", "pontos", "equipes", "jogador"
+        ]);
+        const hits = vals.filter(v => words.has(v)).length;
+        const hasRank = vals.some(v => v === "rank" || v === "position" || v === "posicao");
+        const hasIdentity = wantedSection === "Team Data"
+          ? vals.some(v => v === "teamname" || v === "team" || v === "teamid")
+          : vals.some(v => v === "playername" || v === "nickname" || v === "player" || v === "uid");
+
+        // Se houver <th>, aceitamos somente se a linha não tiver valores numéricos.
+        // Sem <th>, exigimos pelo menos 2 nomes de coluna reconhecíveis.
+        return (tr.querySelectorAll(":scope > th").length > 0 && hits >= 1) || (hits >= 2 && (hasRank || hasIdentity));
       }
-      return best||[];
-    },section);
-    if(matrix.length>=2)return normalizeMatrix(matrix,type);
-    await page.waitForTimeout(50);
+
+      function canonicalHeader(count) {
+        const source = wantedSection === "Team Data" ? teamCanonical : playerCanonical;
+        return Array.from({length: count}, (_, i) => source[i] || `Informação ${i + 1}`);
+      }
+
+      const tables = [...document.querySelectorAll("table")].filter(t => {
+        const r = t.getBoundingClientRect();
+        return r.width > 0 && r.height > 0;
+      });
+
+      let best = null;
+      let bestScore = -1;
+
+      for (const table of tables) {
+        const trs = [...table.querySelectorAll("tr")];
+        if (trs.length < 1) continue;
+        const rows = trs.map(expandRow).filter(r => r.some(v => clean(v) !== ""));
+        if (!rows.length) continue;
+
+        // Primeiro procura um cabeçalho REAL. Linhas de jogadores/equipes nunca
+        // podem virar cabeçalho só porque não existe THEAD no site de origem.
+        let headerIndex = -1;
+        for (let i = 0; i < Math.min(rows.length, 8); i++) {
+          if (looksLikeHeader(rows[i], trs[i])) {
+            headerIndex = i;
+            break;
+          }
+        }
+
+        let header;
+        let body;
+        if (headerIndex >= 0) {
+          header = rows[headerIndex].map((v, i) => clean(v) || `Informação ${i + 1}`);
+          body = rows.slice(headerIndex + 1);
+        } else {
+          // O MatchStats em alguns momentos entrega apenas as linhas de dados.
+          // Nesse caso o cabeçalho é definido pela estrutura da tabela e TODAS
+          // as linhas recebidas continuam sendo dados.
+          const count = Math.max(...rows.map(r => r.length));
+          header = canonicalHeader(count);
+          body = rows;
+        }
+
+        body = body.filter(row => row.some(v => clean(v) !== ""));
+        if (!header.length || !body.length) continue;
+
+        // Alinha os DADOS ao mesmo campo do cabeçalho. O MatchStats pode
+        // entregar a tabela com a ordem visual correta, mas em algumas
+        // atualizações o DOM inclui/omite uma coluna auxiliar. Se usarmos
+        // apenas row[index], Team Name pode acabar embaixo de Team ID.
+        // Quando existe um cabeçalho real, fazemos o mapeamento pelo nome
+        // da coluna e depois reconstruímos cada linha na ordem canônica.
+        const canonical = wantedSection === "Team Data" ? teamCanonical : playerCanonical;
+        const alias = {
+          matchrank:"Match Rank", rank:"Match Rank", position:"Match Rank", posicao:"Match Rank",
+          teamid:"Team ID", teamname:"Team Name", team:"Team Name",
+          survivalscore:"Survival Score", survival:"Survival Score",
+          kill:"Kill", kills:"Kill", abates:"Kill",
+          totalscore:"Total Score", score:"Total Score", pontos:"Total Score",
+          booyah:"BOOYAH!", booyahscore:"BOOYAH!",
+          damage:"Damage", dano:"Damage", ontarget:"On Target",
+          headshot:"Headshots", headshots:"Headshots",
+          headshotkillrate:"Headshot Kill Rate",
+          headshotaccuracyrate:"Headshot Accuracy Rate", accuracy:"Headshot Accuracy Rate",
+          survivaltime:"Survival Time", revival:"Revival", revives:"Revival",
+          playerid:"Player ID", uid:"Player ID", playername:"Player Name", nickname:"Player Name", player:"Player Name", jogador:"Player Name",
+          assist:"Assist", assists:"Assist", movingdistance:"Moving Distance",
+          revivalmembers:"Revival Members", knockdown:"Knock Down", knockdowns:"Knock Down",
+          rescue:"Rescue Members", rescues:"Rescue Members", rescuemembers:"Rescue Members",
+          maximumkilldistance:"Maximum kill distance", operation:"Operation"
+        };
+        const sourceToCanonical = header.map(h => alias[norm(h)] || clean(h));
+        const canonicalIndex = new Map(canonical.map((h,i)=>[norm(h),i]));
+        const hasUsefulHeaderMapping = header.some(h => canonicalIndex.has(norm(alias[norm(h)] || h)));
+        if (hasUsefulHeaderMapping) {
+          body = body.map(row => {
+            const out = Array(canonical.length).fill("");
+            sourceToCanonical.forEach((name, srcIdx) => {
+              const dst = canonicalIndex.get(norm(name));
+              if (dst !== undefined && out[dst] === "") out[dst] = row[srcIdx] ?? "";
+            });
+            return out;
+          });
+          header = canonical.slice();
+        } else {
+          // Sem cabeçalho real, a própria tabela é considerada já na ordem
+          // oficial e somente é limitada ao número correto de colunas.
+          body = body.map(row => canonical.map((_,i) => row[i] ?? ""));
+          header = canonical.slice();
+        }
+
+        // Remove linhas de controle/paginação que não representam registro.
+        body = body.filter(row => {
+          const first = clean(row[0]);
+          const text = row.map(clean).join(" ").toLowerCase();
+          if (/^(next|previous|prev|pagina|page|mostrar|show)$/i.test(first)) return false;
+          if (text === "no data" || text === "no records") return false;
+          return true;
+        });
+
+        const h = header.map(norm);
+        let score = body.length * 5 + header.length * 4;
+        if (h.some(x => x === "teamname" || x === "team")) score += wantedSection === "Team Data" ? 50 : 5;
+        if (h.some(x => x === "playername" || x === "nickname" || x === "player")) score += wantedSection === "Team Data" ? 0 : 50;
+        if (h.includes("uid")) score += wantedSection === "Team Data" ? 0 : 30;
+        if (h.includes("rank") || h.includes("position")) score += 25;
+        if (h.some(x => ["totalscore","survivalscore","kill","kills","headshot","damage","booyah","abates","pontos"].includes(x))) score += 20;
+        if (headerIndex < 0) score += 15; // tabelas sem cabeçalho real ainda são válidas
+        if (wantedSection === "Team Data" && h.some(x => ["nickname","playername","uid","player"].includes(x))) score -= 60;
+        if (wantedSection !== "Team Data" && h.some(x => ["teamname","team"].includes(x)) && !h.some(x => ["playername","nickname","player","uid"].includes(x))) score -= 30;
+
+        if (score > bestScore) {
+          bestScore = score;
+          best = [header, ...body];
+        }
+      }
+
+      return best || [];
+    }, section);
+
+    if (matrix.length >= 2) return matrix;
+    await page.waitForTimeout(60);
   }
   return [];
 }
@@ -259,28 +424,27 @@ function broadcast(payload){
 function publish(type,data){state.revision++;broadcast({type,revision:state.revision,data});}
 
 async function refreshMatch(m){
-  if(m.refreshing)return;
+  if(m.refreshing)return false;
   m.refreshing=true;
   try{
     const before=JSON.stringify({team:m.teamData,player:m.playerData});
     const next=await snapshot(m);
     m.teamData=next.teamData;m.playerData=next.playerData;m.capturedAt=next.capturedAt;m.sourceUrl=next.sourceUrl;
-    // extractSection alternates MatchStats tabs, which can itself mutate the DOM.
-    // Reset the observed version after taking a snapshot to avoid a self-trigger loop.
     try { m.seenVersion = await m.page.evaluate(() => window.__statsVersion || 0); } catch {}
     const after=JSON.stringify({team:m.teamData,player:m.playerData});
-    if(before!==after) publish('data', {matchId:m.matchId, ...next, derived:deriveCurrent()});
-  }catch(e){m.lastError=e?.message||String(e);}finally{m.refreshing=false;}
+    const changed=before!==after;
+    if(changed) publish('data', {matchId:m.matchId, ...next, derived:deriveCurrent()});
+    return changed;
+  }catch(e){m.lastError=e?.message||String(e);return false;}finally{m.refreshing=false;}
 }
 
 function startWatcher(m){
   if(m.timer)clearInterval(m.timer);
-  m.timer=setInterval(async()=>{
-    try{
-      const v=await m.page.evaluate(()=>window.__statsVersion||0);
-      if(v!==m.seenVersion){m.seenVersion=v;await refreshMatch(m);}
-    }catch{}
-  },POLL_MS);
+  // O ciclo é programado em 1 ms. A proteção `m.refreshing` impede
+  // que uma leitura nova comece antes da anterior terminar. Assim,
+  // o servidor tenta buscar a atualização no menor intervalo possível
+  // sem empilhar centenas de capturas concorrentes.
+  m.timer=setInterval(()=>{ refreshMatch(m).catch(()=>{}); },POLL_MS);
 }
 
 async function addMatch(matchId){
@@ -364,24 +528,54 @@ function topFrom(matrix,type,aliases){
 }
 
 function detectEliminated(matrix){
-  const rows=matrixToObjects(matrix,'player'); if(!rows.length)return null;
-  const teamMap=new Map();
-  for(const p of rows){const team=p['Team Name']||p.Team||'';if(!team)continue;if(!teamMap.has(team))teamMap.set(team,[]);teamMap.get(team).push(p);}
-  for(const [team,ps] of teamMap){
-    if(ps.length<2)continue;
-    const alive=ps.filter(p=>{const s=norm(p.Operation||p.Status||p.State||''); if(/dead|elimin|morto|eliminado/.test(s))return false; if(/alive|vivo|living/.test(s))return true; const kd=num(p['Knock Down']); return kd===0;});
-    if(alive.length===0)return {teamName:team,players:ps};
+  if(!Array.isArray(matrix)||matrix.length<2)return null;
+  const header=matrix[0]||[];
+  const statusAliases=['Status','State','Player Status','Operation'];
+  const statusIdx=header.findIndex(h=>statusAliases.some(a=>norm(h)===norm(a)));
+  if(statusIdx<0)return null;
+  const teamIdx=headerIndex(header,'Team Name','Team');
+  if(teamIdx<0)return null;
+  const rows=matrix.slice(1).filter(r=>r?.some(v=>clean(v)!==''));
+  const byTeam=new Map();
+  for(const row of rows){
+    const team=clean(row[teamIdx]); if(!team)continue;
+    if(!byTeam.has(team))byTeam.set(team,[]);
+    byTeam.get(team).push(row);
+  }
+  for(const [team,players] of byTeam){
+    if(players.length<2)continue;
+    const states=players.map(r=>norm(r[statusIdx]));
+    const explicit=states.filter(s=>/dead|elimin|morto|eliminado|spectator|out/.test(s));
+    if(explicit.length===players.length){
+      const rank=clean(players[0]?.[headerIndex(header,'Match Rank','Rank')]||'');
+      return {teamName:team,rank,players:players.map(r=>Object.fromEntries(header.map((h,i)=>[h,clean(r[i])])))};
+    }
   }
   return null;
 }
 
 function deriveCurrent(){
   const cur=currentMatrices();
+  const teamAssistTop=(()=>{
+    const ph=cur.playerData?.[0]||[];
+    const rows=cur.playerData?.slice(1)||[];
+    const teamNameIdx=headerIndex(ph,'Team Name','Team');
+    const assistIdx=headerIndex(ph,'Assist','Assists');
+    if(teamNameIdx<0||assistIdx<0)return null;
+    const sums=new Map();
+    for(const r of rows){
+      const team=clean(r[teamNameIdx]); if(!team)continue;
+      sums.set(team,(sums.get(team)||0)+num(r[assistIdx]));
+    }
+    let best=null;
+    for(const [team,v] of sums){if(!best||v>best.value)best={type:'team',field:'Assist',value:String(v),teamName:team,row:null,header:ph};}
+    return best;
+  })();
   const tops={
     teamKills:topFrom(cur.teamData,'team',['Kill','Kills']),
     teamDamage:topFrom(cur.teamData,'team',['Damage']),
     teamHeadshots:topFrom(cur.teamData,'team',['Headshots','Headshot']),
-    teamAssist:topFrom(cur.teamData,'team',['Assist','Assists']),
+    teamAssist:topFrom(cur.teamData,'team',['Assist','Assists'])||teamAssistTop,
     teamRevival:topFrom(cur.teamData,'team',['Revival','Revives']),
     playerKills:topFrom(cur.playerData,'player',['Kill','Kills']),
     playerDamage:topFrom(cur.playerData,'player',['Damage']),
@@ -441,9 +635,12 @@ const originalPublish=publish;
 // Keep processDerived in the watcher path by wrapping broadcast calls from refreshMatch.
 const _refreshMatch=refreshMatch;
 refreshMatch = async function(m){
-  await _refreshMatch(m);
-  processDerived();
-  if(state.overlays.ranking.enabled)publish('ranking',rankingPayload());
+  const changed=await _refreshMatch(m);
+  if(changed){
+    processDerived();
+    if(state.overlays.ranking.enabled)publish('ranking',rankingPayload());
+  }
+  return changed;
 };
 
 app.listen(PORT,'0.0.0.0',()=>console.log(`FFWS vMix MultiMatch server running on :${PORT} · poll=${POLL_MS}ms`));

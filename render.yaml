@@ -1,13 +1,6 @@
 services:
   - type: web
-    name: ffws-vmix-multimatch
+    name: stats-engine
     runtime: docker
     plan: free
     healthCheckPath: /api/health
-    envVars:
-      - key: PORT
-        value: 10000
-      - key: POLL_MS
-        value: 1
-      - key: MAX_MATCHES
-        value: 8

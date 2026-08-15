@@ -21,7 +21,9 @@ window.OVERLAY_CONFIG = {
   },
   positions: {
     team: { logo:{x:960,y:445,w:300,h:300}, name:{x:960,y:790}, value:{x:960,y:900} },
-    player: { logo:{x:960,y:450,w:230,h:230}, name:{x:960,y:765}, team:{x:960,y:805}, value:{x:960,y:885} },
+    player: { photo:{x:280,y:540,w:310,h:350}, logo:{x:960,y:450,w:310,h:310}, name:{x:960,y:765}, team:{x:960,y:805}, value:{x:960,y:885} },
+    eliminated: { logo:{x:285,y:530,w:280,h:280}, rank:{x:865,y:835,w:180}, name:{x:1360,y:835,w:760} },
+    extraText: { x:960, y:980, w:1500 },
     ranking: { x:690, y:120, w:980, rowH:72, logoX:820, teamX:955, valueX:1400, rankX:735, statusX:1520 }
   },
   overlays: {
