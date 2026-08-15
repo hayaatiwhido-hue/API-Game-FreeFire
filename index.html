@@ -202,7 +202,7 @@ tr {
 
     <!-- PAINEL TEAM DATA -->
     <div id="teamPanel" class="panel">
-      <div class="panel-top"><div><div class="panel-title">Ranking das equipes</div><div class="panel-desc">Cabeçalhos de totais e métricas agregadas da equipe exibidos acima da tabela.</div></div><div class="panel-actions"><button class="download" id="downloadTeam">BAIXAR CSV · EQUIPES</button></div></div>
+      <div class="panel-top"><div><div class="panel-title">Ranking das equipes</div><div class="panel-desc">Cabeçalhos oficiais do MatchStats organizados acima da tabela.</div></div><div class="panel-actions"><button class="download" id="downloadTeam">BAIXAR CSV · EQUIPES</button></div></div>
       
       <!-- Cabeçalho de Informações / Totais Puxados Acima da Tabela Geral (TeamData) -->
       <div id="teamSummaryHeader" class="summary-metrics-grid">
@@ -218,7 +218,7 @@ tr {
 
     <!-- PAINEL PLAYER DATA -->
     <div id="playerPanel" class="panel" style="display:none">
-      <div class="panel-top"><div><div class="panel-title">Ranking dos jogadores</div><div class="panel-desc">Cabeçalhos com somatório de abates, danos e informações detalhadas dos jogadores acima da tabela.</div></div><div class="panel-actions"><button class="download" id="downloadPlayer">BAIXAR CSV · JOGADORES</button></div></div>
+      <div class="panel-top"><div><div class="panel-title">Ranking dos jogadores</div><div class="panel-desc">Cabeçalhos oficiais do MatchStats com somatório de abates, danos e informações dos players.</div></div><div class="panel-actions"><button class="download" id="downloadPlayer">BAIXAR CSV · JOGADORES</button></div></div>
       
       <!-- Cabeçalho de Informações / Totais Puxados Acima da Tabela Geral (PlayerData) -->
       <div id="playerSummaryHeader" class="summary-metrics-grid">
@@ -241,7 +241,7 @@ const previousRows=new Map();
 const $=s=>document.querySelector(s);
 const esc=v=>String(v??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]));
 function status(text,live=false){$('#statusText').textContent=text;$('#status').classList.toggle('live',live)}
-function keyFor(row,header,index){const h=header.map(x=>String(x).toLowerCase().trim());for(const name of ['uid','player name','team name','nickname']){const i=h.indexOf(name);if(i>=0&&String(row[i]??'').trim())return String(row[i]).trim()}return `${index}|${row.join('|')}`}
+function keyFor(row,header,index){const h=header.map(x=>String(x).toLowerCase().trim());for(const name of ['uid','player name','team name','nickname','team']){const i=h.indexOf(name);if(i>=0&&String(row[i]??'').trim())return String(row[i]).trim()}return `${index}|${row.join('|')}`}
 function movement(oldRank,newRank){if(oldRank==null||oldRank===newRank)return '<span class="movement same"></span>';return newRank<oldRank?'<span class="movement up">▲</span>':'<span class="movement down">▼</span>'}
 
 function updateTeamSummary(dataObj) {
@@ -306,28 +306,30 @@ function updatePlayerSummary(dataObj) {
 }
 
 function renderTable(target,matrix,stateKey){
-  if(!matrix||matrix.length===0){target.innerHTML='<div class="empty">Nenhum dado disponível.</div>';return}
+  if(!matrix || matrix.length === 0){target.innerHTML='<div class="empty">Nenhum dado disponível.</div>';return}
   
   let header, rows;
   const firstVal = String(matrix[0]?.[0]??'').trim();
-  const isHeaderRow = isNaN(firstVal) && !['1','2','3','4','5','6','7','8','9','10','11','12','13','14','15','16','17','18','19','20'].includes(firstVal);
+  const isHeaderRow = isNaN(firstVal) && !['1','2','3','4','5','6','7','8','9','10','11','12','13','14','15','16','17','18','19','20'].includes(firstVal) && !firstVal.match(/^\d+$/);
 
-  if(isHeaderRow){
+  if(isHeaderRow && matrix.length > 1){
     header = matrix[0].map(x=>String(x??'').trim()||'—');
     rows = matrix.slice(1);
   } else {
     const colCount = matrix[0].length;
     if(stateKey === 'team'){
-      const defaultTeamHeaders = ['Rank', 'Team Name', 'Total Score', 'Survival Score', 'Kill', 'BOOYAH!', 'Damage', 'On Target'];
+      // Padrão oficial MatchStats para Equipes na exata ordem exigida
+      const standardTeamHeaders = ['Rank', 'Team ID', 'Team Name', 'Total Score', 'Survival Score', 'Kill', 'BOOYAH!', 'Damage', 'On Target'];
       header = [];
       for(let c=0; c<colCount; c++){
-        header.push(defaultTeamHeaders[c] || `Coluna ${c+1}`);
+        header.push(standardTeamHeaders[c] || `Estatística ${c+1}`);
       }
     } else {
-      const defaultPlayerHeaders = ['Rank', 'Team Name', 'Player Name', 'UID', 'Total Score', 'Survival Score', 'Kill', 'BOOYAH!', 'Damage', 'On Target'];
+      // Padrão oficial MatchStats para Players na exata ordem exigida
+      const standardPlayerHeaders = ['Rank', 'Team Name', 'Player Name', 'UID', 'Total Score', 'Survival Score', 'Kill', 'BOOYAH!', 'Damage', 'On Target'];
       header = [];
       for(let c=0; c<colCount; c++){
-        header.push(defaultPlayerHeaders[c] || `Coluna ${c+1}`);
+        header.push(standardPlayerHeaders[c] || `Estatística ${c+1}`);
       }
     }
     rows = matrix;
