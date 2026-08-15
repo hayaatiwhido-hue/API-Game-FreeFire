@@ -476,7 +476,7 @@ app.get("/api/events", (req, res) => {
 });
 
 app.get("/api/health", (req, res) => {
-  res.json({ ok: true, version: "1.0.14", busy, hasBrowser: !!browser, live: !!livePollTimer, pollMs: 30 });
+  res.json({ ok: true, version: "1.1.0", busy, hasBrowser: !!browser, live: !!livePollTimer, pollMs: 30 });
 });
 
 app.post("/api/capture", async (req, res) => {
@@ -500,7 +500,7 @@ app.post("/api/capture", async (req, res) => {
 
 app.get("/api/last", (req, res) => res.json({ ok: true, result: lastResult }));
 
-app.listen(PORT, "0.0.0.0", () => console.log(`Stats Engine 1.0.14 running on port ${PORT}`));
+app.listen(PORT, "0.0.0.0", () => console.log(`Stats Engine 1.1.0 running on port ${PORT}`));
 
 process.on("SIGTERM", async () => {
   for (const res of sseClients) { try { res.end(); } catch {} }
