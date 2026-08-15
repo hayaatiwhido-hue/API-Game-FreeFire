@@ -298,38 +298,86 @@ function updatePlayerSummary(dataObj) {
 
 function renderTable(target, matrix, stateKey){
   if(!matrix || matrix.length === 0){target.innerHTML='<div class="empty">Nenhum dado disponível.</div>';return}
-  
-  let header, rows;
-  const firstVal = String(matrix[0]?.[0]??'').trim();
-  const isHeaderRow = isNaN(firstVal) && !['1','2','3','4','5','6','7','8','9','10','11','12','13','14','15','16','17','18','19','20'].includes(firstVal) && !firstVal.match(/^\d+$/);
 
-  if(isHeaderRow && matrix.length > 1){
-    header = matrix[0].map(x=>String(x??'').trim()||'—');
+  // O MatchStats envia uma primeira linha que representa os cabeçalhos.
+  // Essa linha NUNCA deve aparecer como dado. Os valores abaixo dela são os
+  // registros reais, cada um em sua própria linha.
+  let header, rows;
+  const firstRow = Array.isArray(matrix[0]) ? matrix[0] : [];
+  const normalizeHeader = value => String(value ?? '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g,'')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g,'')
+    .trim();
+
+  const headerMap = {
+    rank:'Rank',
+    position:'Rank',
+    posicao:'Rank',
+    teamrank:'Team Rank',
+    playerrank:'Player Rank',
+    teamname:'Team Name',
+    team:'Team Name',
+    equipe:'Team Name',
+    equipes:'Team Name',
+    playername:'Player Name',
+    player:'Player Name',
+    jogador:'Player Name',
+    nickname:'Player Name',
+    uid:'UID',
+    totalscore:'Total Score',
+    score:'Total Score',
+    pontos:'Total Score',
+    survivalscore:'Survival Score',
+    survival:'Survival Score',
+    sobrevivencia:'Survival Score',
+    kill:'Kill',
+    kills:'Kill',
+    abates:'Kill',
+    headshot:'Headshot',
+    headshots:'Headshot',
+    damage:'Damage',
+    dano:'Damage',
+    revival:'Revival',
+    revives:'Revival',
+    rescue:'Rescue',
+    rescues:'Rescue',
+    booyah:'Booyah'
+  };
+
+  const mappedHeader = firstRow.map((value,index)=>{
+    const normalized = normalizeHeader(value);
+    return headerMap[normalized] || String(value ?? '').trim() || `Informação ${index+1}`;
+  });
+
+  // Se a primeira linha realmente contém nomes de colunas do MatchStats,
+  // usa-a somente no THEAD e começa os dados a partir da segunda linha.
+  const headerWords = mappedHeader.join('|').toLowerCase();
+  const hasRealHeader = /rank|teamname|playername|totalscore|survivalscore|kill|uid/.test(
+    firstRow.map(normalizeHeader).join('|')
+  );
+
+  if(hasRealHeader && matrix.length > 1){
+    header = mappedHeader;
     rows = matrix.slice(1);
-  } else {
-    const colCount = matrix[0].length;
-    if(stateKey === 'team'){
-      // Força os cabeçalhos limpos em Português exatamente como o usuário demonstrou na imagem de referência
-      const exactTeamHeaders = ['POSIÇÃO', 'EQUIPES', 'ABATES', 'PONTOS', 'BOOYAH'];
-      header = [];
-      for(let c=0; c<colCount; c++){
-        header.push(exactTeamHeaders[c] || `COLUNA ${c+1}`);
-      }
-    } else {
-      // Força os cabeçalhos em português corretos para os Jogadores
-      const exactPlayerHeaders = ['POSIÇÃO', 'EQUIPE', 'JOGADOR', 'UID', 'PONTOS', 'ABATES', 'BOOYAH', 'DANO', 'ON TARGET'];
-      header = [];
-      for(let c=0; c<colCount; c++){
-        header.push(exactPlayerHeaders[c] || `COLUNA ${c+1}`);
-      }
-    }
+  }else{
+    const colCount = firstRow.length;
+    const teamHeaders = ['Rank','Team Rank','—','Team Name','Total Score','Survival Score','Kill','Headshot','Damage','Booyah'];
+    const playerHeaders = ['Rank','Team Rank','Team Name','Player Name','UID','Total Score','Survival Score','Kill','Headshot','Damage','Revival','Rescue','Booyah'];
+    const defaults = stateKey === 'team' ? teamHeaders : playerHeaders;
+    header = Array.from({length:colCount},(_,c)=>defaults[c] || `Informação ${c+1}`);
     rows = matrix;
   }
+
+  // Remove apenas linhas completamente vazias. Nenhuma linha de jogador/equipe
+  // é combinada, dividida ou reorganizada.
+  rows = rows.filter(row=>Array.isArray(row) && row.some(v=>String(v??'').trim()!==''));
 
   const old=previousRows.get(stateKey)||new Map();
   target.innerHTML='<table><thead><tr>'+header.map(x=>`<th>${esc(x)}</th>`).join('')+'</tr></thead><tbody></tbody></table>';
   const tbody=target.querySelector('tbody');
-  
+
   rows.forEach((row,i)=>{
     const key=keyFor(row,header,i),oldInfo=old.get(key),rank=i+1,tr=document.createElement('tr');
     tr.dataset.key=key;
@@ -339,7 +387,7 @@ function renderTable(target, matrix, stateKey){
     tr.innerHTML=header.map((_,c)=>`<td>${esc(row[c]??'')}${c===0?movement(oldInfo?.rank,rank):''}</td>`).join('');
     tbody.appendChild(tr);
   });
-  
+
   const next=new Map();
   rows.forEach((row,i)=>next.set(keyFor(row,header,i),{rank:i+1}));
   previousRows.set(stateKey,next);
@@ -347,7 +395,6 @@ function renderTable(target, matrix, stateKey){
   if(stateKey === 'team') updateTeamSummary({header, rows});
   if(stateKey === 'player') updatePlayerSummary({header, rows});
 }
-
 function paint(data,isLive=false){
   if(!data)return;
   result=data;
