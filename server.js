@@ -7,31 +7,21 @@ app.use(express.static(__dirname));
 
 const PORT = process.env.PORT || 10000;
 const MATCHSTATS_URL = "https://matchstats.us.ffesports.com/";
-
+const VERSION = "1.0.3";
 let activeJob = null;
 
-function cleanText(v) {
-  return String(v ?? "").replace(/\s+/g, " ").trim();
+const cleanText = v => String(v ?? "").replace(/\s+/g, " ").trim();
+
+async function visible(locator) {
+  try { return await locator.isVisible(); } catch { return false; }
 }
 
-function unique(arr) {
-  return [...new Set(arr.filter(Boolean))];
+async function allFrames(page) {
+  return page.frames();
 }
 
-async function textOf(locator) {
-  try { return cleanText(await locator.innerText()); } catch { return ""; }
-}
-
-async function clickIfPossible(locator) {
-  try {
-    if (await locator.count()) {
-      const el = locator.first();
-      await el.scrollIntoViewIfNeeded().catch(() => {});
-      await el.click({ timeout: 5000 });
-      return true;
-    }
-  } catch {}
-  return false;
+async function frameText(frame) {
+  return frame.locator("body").innerText().catch(() => "");
 }
 
 async function findSearchInput(page) {
@@ -43,264 +33,261 @@ async function findSearchInput(page) {
     'input[name*="match" i]',
     'input.form-control'
   ];
-  for (const selector of selectors) {
-    const loc = page.locator(selector).filter({ visible: true });
-    if (await loc.count()) return loc.first();
-  }
-  const inputs = page.locator("input:visible");
-  const count = await inputs.count();
-  for (let i = 0; i < count; i++) {
-    const el = inputs.nth(i);
-    const type = (await el.getAttribute("type")) || "";
-    if (!["hidden", "button", "submit", "checkbox", "radio"].includes(type)) return el;
+  for (const frame of await allFrames(page)) {
+    for (const selector of selectors) {
+      const loc = frame.locator(selector);
+      const n = await loc.count().catch(() => 0);
+      for (let i = 0; i < n; i++) if (await visible(loc.nth(i))) return loc.nth(i);
+    }
+    const inputs = frame.locator("input");
+    const count = await inputs.count().catch(() => 0);
+    for (let i = 0; i < count; i++) {
+      const el = inputs.nth(i);
+      if (!await visible(el)) continue;
+      const type = (await el.getAttribute("type").catch(() => "")) || "";
+      if (!["hidden", "button", "submit", "checkbox", "radio"].includes(type)) return el;
+    }
   }
   return null;
 }
 
 async function clickSearch(page) {
-  const candidates = [
-    'button:has-text("Search")',
-    'a:has-text("Search")',
-    'button[aria-label*="search" i]',
-    'button[title*="search" i]',
-    'i[class*="search" i]',
-    'svg[class*="search" i]'
+  const selectors = [
+    'button:has-text("Search")', 'a:has-text("Search")',
+    'button[aria-label*="search" i]', 'button[title*="search" i]',
+    '.fa-search', '.glyphicon-search', 'i[class*="search" i]'
   ];
-  for (const s of candidates) {
-    if (await clickIfPossible(page.locator(s))) return true;
-  }
-  return false;
-}
-
-async function waitForResults(page, matchId) {
-  const started = Date.now();
-  while (Date.now() - started < 15000) {
-    const body = await page.locator("body").innerText().catch(() => "");
-    if (body.includes(String(matchId))) return true;
-    await page.waitForTimeout(400);
-  }
-  return false;
-}
-
-async function searchMatch(page, matchId) {
-  const input = await findSearchInput(page);
-  if (!input) throw new Error("Campo de pesquisa do MatchStats não foi encontrado.");
-
-  await input.fill(String(matchId));
-  await clickSearch(page).catch(() => {});
-  await input.press("Enter").catch(() => {});
-  await waitForResults(page, matchId);
-  await page.waitForTimeout(1200);
-
-  const viewCandidates = [
-    'button:has-text("View")',
-    'a:has-text("View")',
-    'input[type="button"][value*="View" i]',
-    '[title*="View" i]',
-    '[aria-label*="View" i]'
-  ];
-
-  for (const selector of viewCandidates) {
-    const loc = page.locator(selector).filter({ visible: true });
-    const count = await loc.count();
-    for (let i = 0; i < count; i++) {
-      const el = loc.nth(i);
-      const txt = cleanText(await el.innerText().catch(() => ""));
-      const title = cleanText(await el.getAttribute("title").catch(() => ""));
-      const aria = cleanText(await el.getAttribute("aria-label").catch(() => ""));
-      if (/view/i.test(`${txt} ${title} ${aria}`)) {
-        await el.click({ timeout: 7000 });
-        await page.waitForTimeout(1000);
-        return;
+  for (const frame of await allFrames(page)) {
+    for (const selector of selectors) {
+      const loc = frame.locator(selector);
+      const n = await loc.count().catch(() => 0);
+      for (let i = 0; i < n; i++) if (await visible(loc.nth(i))) {
+        await loc.nth(i).click({ timeout: 5000 }).catch(() => {});
+        return true;
       }
     }
   }
+  return false;
+}
 
-  // Fallback: find the row containing the Match ID and click its first View-like control.
-  const rows = page.locator("tr:visible");
-  const rowCount = await rows.count();
-  for (let i = 0; i < rowCount; i++) {
-    const row = rows.nth(i);
-    const text = await row.innerText().catch(() => "");
-    if (text.includes(String(matchId))) {
-      const controls = row.locator("button,a,input[type=button],input[type=submit]").filter({ visible: true });
-      const cc = await controls.count();
-      for (let j = 0; j < cc; j++) {
-        const c = controls.nth(j);
-        const label = cleanText(
-          (await c.innerText().catch(() => "")) + " " +
-          (await c.getAttribute("title").catch(() => "")) + " " +
-          (await c.getAttribute("aria-label").catch(() => "")) + " " +
-          (await c.getAttribute("value").catch(() => ""))
-        );
-        if (/view/i.test(label) || j === 0) {
-          await c.click({ timeout: 7000 });
-          await page.waitForTimeout(1000);
-          return;
+async function waitForMatch(page, matchId) {
+  const end = Date.now() + 18000;
+  while (Date.now() < end) {
+    for (const frame of await allFrames(page)) {
+      const body = await frameText(frame);
+      if (body.includes(String(matchId))) return true;
+    }
+    await page.waitForTimeout(350);
+  }
+  return false;
+}
+
+async function elementLabel(el) {
+  return cleanText([
+    await el.innerText().catch(() => ""),
+    await el.textContent().catch(() => ""),
+    await el.getAttribute("title").catch(() => ""),
+    await el.getAttribute("aria-label").catch(() => ""),
+    await el.getAttribute("value").catch(() => ""),
+    await el.getAttribute("data-original-title").catch(() => "")
+  ].join(" "));
+}
+
+async function clickView(page, matchId) {
+  // 1) Procura literalmente o botão/link View em TODAS as frames.
+  const candidates = [
+    'button', 'a', 'input[type="button"]', 'input[type="submit"]',
+    '[role="button"]', '[title]', '[aria-label]'
+  ];
+  for (const frame of await allFrames(page)) {
+    for (const selector of candidates) {
+      const loc = frame.locator(selector);
+      const n = await loc.count().catch(() => 0);
+      for (let i = 0; i < n; i++) {
+        const el = loc.nth(i);
+        if (!await visible(el)) continue;
+        const label = await elementLabel(el);
+        if (/^view$/i.test(label) || /\bview\b/i.test(label)) {
+          const before = page.url();
+          await el.scrollIntoViewIfNeeded().catch(() => {});
+          const href = await el.getAttribute("href").catch(() => null);
+          await el.click({ timeout: 8000 }).catch(async () => {
+            await el.evaluate(node => node.click()).catch(() => {});
+          });
+          await page.waitForTimeout(1200);
+          return { ok: true, method: "view-text", href, before, after: page.url(), label };
         }
       }
     }
   }
 
-  throw new Error(`A partida ${matchId} foi localizada, mas o botão View não foi encontrado.`);
+  // 2) Procura a linha de resultado. O MatchStats nem sempre coloca o MatchID
+  // no texto da célula; nesse caso usamos a linha com a data/colunas e o último
+  // grupo de controles, priorizando o controle que parece View.
+  for (const frame of await allFrames(page)) {
+    const rows = frame.locator("tr");
+    const n = await rows.count().catch(() => 0);
+    for (let i = 0; i < n; i++) {
+      const row = rows.nth(i);
+      if (!await visible(row)) continue;
+      const txt = cleanText(await row.innerText().catch(() => ""));
+      const controls = row.locator('button,a,input[type="button"],input[type="submit"],[role="button"]');
+      const cc = await controls.count().catch(() => 0);
+      if (!cc) continue;
+      // Resultado do MatchStats possui uma coluna Operation; ela normalmente é a última.
+      for (let j = 0; j < cc; j++) {
+        const c = controls.nth(j);
+        if (!await visible(c)) continue;
+        const label = await elementLabel(c);
+        if (/view/i.test(label)) {
+          const href = await c.getAttribute("href").catch(() => null);
+          await c.click({ timeout: 8000 }).catch(async () => await c.evaluate(node => node.click()).catch(() => {}));
+          await page.waitForTimeout(1200);
+          return { ok: true, method: "row-view", href, rowText: txt.slice(0, 500), label };
+        }
+      }
+      // Se a linha contém uma data típica e não achamos o texto View, tente o primeiro controle da Operation.
+      if (/\d{2}-\d{2}-\d{4}/.test(txt) && cc) {
+        const c = controls.nth(0);
+        const href = await c.getAttribute("href").catch(() => null);
+        await c.click({ timeout: 8000 }).catch(async () => await c.evaluate(node => node.click()).catch(() => {}));
+        await page.waitForTimeout(1200);
+        return { ok: true, method: "row-first-control", href, rowText: txt.slice(0, 500), label: await elementLabel(c) };
+      }
+    }
+  }
+
+  // 3) Fallback por links: se o href aponta para a página de detalhe, navega diretamente.
+  for (const frame of await allFrames(page)) {
+    const links = frame.locator("a[href]");
+    const n = await links.count().catch(() => 0);
+    for (let i = 0; i < n; i++) {
+      const a = links.nth(i);
+      if (!await visible(a)) continue;
+      const href = await a.getAttribute("href").catch(() => "");
+      const label = await elementLabel(a);
+      if (/view|matchdetail|matchd/i.test(`${label} ${href}`)) {
+        try {
+          if (href && !href.startsWith("javascript:")) {
+            const url = new URL(href, page.url()).href;
+            await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30000 }).catch(() => {});
+            await page.waitForTimeout(1000);
+            return { ok: true, method: "href-fallback", href: url, label };
+          }
+        } catch {}
+      }
+    }
+  }
+
+  throw new Error(`A partida ${matchId} foi localizada, mas o controle View não pôde ser acionado. O MatchStats pode estar usando um componente/iframe diferente.`);
 }
 
 async function extractTables(page) {
-  return await page.locator("table:visible").evaluateAll(tables => {
-    const norm = v => String(v ?? "").replace(/\s+/g, " ").trim();
-    return tables.map((table, index) => {
-      const rows = [...table.querySelectorAll("tr")].map(tr =>
-        [...tr.querySelectorAll("th,td")].map(td => norm(td.innerText))
-      ).filter(r => r.some(Boolean));
-      if (!rows.length) return null;
-      let headers = rows[0];
-      let data = rows.slice(1);
-      const first = table.querySelector("thead tr");
-      if (first) {
-        headers = [...first.querySelectorAll("th,td")].map(td => norm(td.innerText));
+  const all = [];
+  for (const frame of await allFrames(page)) {
+    const tables = await frame.locator("table:visible").evaluateAll(tables => {
+      const norm = v => String(v ?? "").replace(/\s+/g, " ").trim();
+      return tables.map((table, index) => {
+        const trs = [...table.querySelectorAll("tr")];
+        const rows = trs.map(tr => [...tr.querySelectorAll("th,td")].map(td => norm(td.innerText))).filter(r => r.some(Boolean));
+        if (!rows.length) return null;
+        let headers = rows[0], data = rows.slice(1);
+        const head = table.querySelector("thead tr");
+        if (head) headers = [...head.querySelectorAll("th,td")].map(td => norm(td.innerText));
         const bodyRows = [...table.querySelectorAll("tbody tr")];
-        data = bodyRows.length
-          ? bodyRows.map(tr => [...tr.querySelectorAll("th,td")].map(td => norm(td.innerText)))
-          : rows.slice(1);
-      }
-      return { index, headers, rows: data };
-    }).filter(Boolean);
-  });
+        if (bodyRows.length) data = bodyRows.map(tr => [...tr.querySelectorAll("th,td")].map(td => norm(td.innerText)));
+        return { index, headers, rows: data };
+      }).filter(Boolean);
+    }).catch(() => []);
+    all.push(...tables);
+  }
+  return all;
 }
 
 function classifyTables(tables) {
-  const team = [];
-  const player = [];
-  const other = [];
-
+  const team = [], player = [], other = [];
   for (const table of tables) {
     const h = table.headers.join(" | ").toLowerCase();
-    if (
-      /team id|team name|number of team|survival score|rescue members/.test(h)
-    ) team.push(table);
-    else if (
-      /player|uid|nickname|headshot|revival|damage|kill|headshot accuracy/.test(h)
-    ) player.push(table);
+    if (/team id|team name|number of team|survival score|rescue members/.test(h)) team.push(table);
+    else if (/player|uid|nickname|headshot|revival|damage|kill|headshot accuracy|on target/.test(h)) player.push(table);
     else other.push(table);
   }
   return { team, player, other };
 }
 
-async function clickPlayerData(page) {
-  const selectors = [
-    'a:has-text("Player Data")',
-    'button:has-text("Player Data")',
-    '[title*="Player Data" i]',
-    '[aria-label*="Player Data" i]',
-    '[data-original-title*="Player Data" i]',
-    'a:has-text("Player")',
-    'button:has-text("Player")'
-  ];
-  for (const s of selectors) {
-    const loc = page.locator(s).filter({ visible: true });
-    if (await loc.count()) {
-      for (let i = 0; i < await loc.count(); i++) {
-        const el = loc.nth(i);
-        const label = cleanText(
-          (await el.innerText().catch(() => "")) + " " +
-          (await el.getAttribute("title").catch(() => "")) + " " +
-          (await el.getAttribute("aria-label").catch(() => "")) + " " +
-          (await el.getAttribute("data-original-title").catch(() => ""))
-        );
-        if (/player/i.test(label)) {
-          await el.click({ timeout: 6000 }).catch(() => {});
-          await page.waitForTimeout(800);
-          return true;
-        }
+async function clickTabLike(page, patterns) {
+  for (const frame of await allFrames(page)) {
+    const loc = frame.locator('a,button,[role="button"],li');
+    const n = await loc.count().catch(() => 0);
+    for (let i = 0; i < n; i++) {
+      const el = loc.nth(i);
+      if (!await visible(el)) continue;
+      const label = await elementLabel(el);
+      if (patterns.some(p => p.test(label))) {
+        await el.click({ timeout: 7000 }).catch(async () => await el.evaluate(node => node.click()).catch(() => {}));
+        await page.waitForTimeout(900);
+        return { ok: true, label };
       }
     }
   }
-  return false;
+  return { ok: false };
 }
 
 async function scrapeMatch(matchId) {
-  const browser = await chromium.launch({
-    headless: true,
-    args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"]
-  });
-
-  const context = await browser.newContext({
-    viewport: { width: 1440, height: 1000 },
-    userAgent: "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/131 Safari/537.36"
-  });
-
+  const browser = await chromium.launch({ headless: true, args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"] });
+  const context = await browser.newContext({ viewport: { width: 1440, height: 1000 }, acceptDownloads: true });
   const page = await context.newPage();
   page.setDefaultTimeout(10000);
 
-  const result = {
-    version: "1.0.2",
-    matchId: String(matchId),
-    source: MATCHSTATS_URL,
-    capturedAt: new Date().toISOString(),
-    match: {},
-    teamData: [],
-    playerData: [],
-    tables: [],
-    diagnostics: {}
-  };
+  const result = { version: VERSION, matchId: String(matchId), source: MATCHSTATS_URL, capturedAt: new Date().toISOString(), match: {}, teamData: [], playerData: [], tables: [], downloads: [], diagnostics: {} };
 
   try {
-    // O MatchStats pode iniciar uma segunda navegação para a mesma URL.
-    // "commit" + tratamento do erro evita o problema de page.goto interrompido
-    // que apareceu nas versões anteriores.
-    try {
-      await page.goto(MATCHSTATS_URL, { waitUntil: "commit", timeout: 30000 });
-    } catch (navError) {
-      const current = page.url();
-      if (!current.includes("matchstats.us.ffesports.com")) throw navError;
-    }
+    try { await page.goto(MATCHSTATS_URL, { waitUntil: "commit", timeout: 30000 }); }
+    catch (e) { if (!page.url().includes("matchstats.us.ffesports.com")) throw e; }
     await page.waitForLoadState("domcontentloaded", { timeout: 15000 }).catch(() => {});
-    await page.waitForTimeout(1600);
+    await page.waitForTimeout(1800);
 
-    await searchMatch(page, matchId);
+    const input = await findSearchInput(page);
+    if (!input) throw new Error("Campo de pesquisa do MatchStats não foi encontrado.");
+    await input.fill(String(matchId));
+    await clickSearch(page);
+    await input.press("Enter").catch(() => {});
+    const found = await waitForMatch(page, matchId);
+    if (!found) throw new Error(`O MatchID ${matchId} não apareceu nos resultados do MatchStats.`);
+    await page.waitForTimeout(1000);
 
-    result.diagnostics.viewUrl = page.url();
-    result.diagnostics.viewTitle = await page.title().catch(() => "");
+    const view = await clickView(page, matchId);
+    result.diagnostics.view = view;
+    await page.waitForTimeout(1500);
 
     let tables = await extractTables(page);
     let classified = classifyTables(tables);
 
-    // Some MatchStats builds expose Player Data through an operation icon/tab.
+    // O detalhe pode apresentar TeamData primeiro e PlayerData em uma aba/ícone separado.
     if (!classified.player.length) {
-      await clickPlayerData(page);
+      const playerClick = await clickTabLike(page, [/player\s*data/i, /^player$/i]);
+      result.diagnostics.playerTab = playerClick;
       const after = await extractTables(page);
-      const afterClassified = classifyTables(after);
-      if (afterClassified.player.length) {
-        classified.player = afterClassified.player;
-        tables = after;
-      }
+      const c2 = classifyTables(after);
+      if (c2.player.length) { classified.player = c2.player; tables = after; }
+    }
+
+    // Volta/abre Team Data caso o clique de Player Data tenha trocado a área.
+    if (!classified.team.length) {
+      const teamClick = await clickTabLike(page, [/team\s*data/i, /^team$/i]);
+      result.diagnostics.teamTab = teamClick;
+      const after = await extractTables(page);
+      const c2 = classifyTables(after);
+      if (c2.team.length) { classified.team = c2.team; tables = after; }
     }
 
     result.tables = tables;
     result.teamData = classified.team;
     result.playerData = classified.player;
+    result.match = { url: page.url(), title: await page.title().catch(() => ""), textPreview: (await page.locator("body").innerText().catch(() => "")).slice(0, 7000) };
+    result.diagnostics = { ...result.diagnostics, finalUrl: page.url(), tablesFound: tables.length, teamTables: classified.team.length, playerTables: classified.player.length, otherTables: classified.other.length, frames: page.frames().length, pageReady: true };
 
-    // Capture visible metadata around the match page.
-    const bodyText = await page.locator("body").innerText().catch(() => "");
-    result.match = {
-      url: page.url(),
-      title: await page.title().catch(() => ""),
-      textPreview: bodyText.slice(0, 5000)
-    };
-
-    result.diagnostics = {
-      ...result.diagnostics,
-      tablesFound: tables.length,
-      teamTables: classified.team.length,
-      playerTables: classified.player.length,
-      otherTables: classified.other.length,
-      pageReady: true
-    };
-
-    if (!classified.team.length && !classified.player.length) {
-      throw new Error("A página da partida abriu, mas nenhum TeamData/PlayerData foi encontrado.");
-    }
-
+    if (!classified.team.length && !classified.player.length) throw new Error("A página View abriu, mas nenhum TeamData/PlayerData foi encontrado. Veja o diagnóstico para identificar a estrutura carregada.");
     return result;
   } finally {
     await context.close().catch(() => {});
@@ -308,46 +295,16 @@ async function scrapeMatch(matchId) {
   }
 }
 
-app.get("/api/health", (_req, res) => {
-  res.json({
-    ok: true,
-    version: "1.0.2",
-    engine: "Playwright",
-    playwright: require("playwright/package.json").version
-  });
-});
+app.get("/api/health", (_req, res) => res.json({ ok: true, version: VERSION, engine: "Playwright", playwright: require("playwright/package.json").version }));
 
 app.post("/api/match", async (req, res) => {
   const matchId = String(req.body?.matchId || "").trim();
-
-  if (!/^\d{5,30}$/.test(matchId)) {
-    return res.status(400).json({ ok: false, error: "Informe um MatchID numérico válido." });
-  }
-
-  if (activeJob) {
-    return res.status(429).json({
-      ok: false,
-      error: "O Engine já está processando uma partida. Aguarde a captura terminar."
-    });
-  }
-
+  if (!/^\d{5,30}$/.test(matchId)) return res.status(400).json({ ok: false, error: "Informe um MatchID numérico válido." });
+  if (activeJob) return res.status(429).json({ ok: false, error: "O Engine já está processando uma partida. Aguarde a captura terminar." });
   activeJob = matchId;
-  try {
-    const data = await scrapeMatch(matchId);
-    res.json({ ok: true, data });
-  } catch (error) {
-    res.status(502).json({
-      ok: false,
-      version: "1.0.2",
-      matchId,
-      error: String(error?.message || error),
-      hint: "O Engine usa o navegador do servidor para abrir o MatchStats, pesquisar o MatchID e entrar em View."
-    });
-  } finally {
-    activeJob = null;
-  }
+  try { res.json({ ok: true, data: await scrapeMatch(matchId) }); }
+  catch (error) { res.status(502).json({ ok: false, version: VERSION, matchId, error: String(error?.message || error), hint: "A V1.0.3 amplia a procura do View para frames, controles, links e coluna Operation." }); }
+  finally { activeJob = null; }
 });
 
-app.listen(PORT, () => {
-  console.log(`Stats Engine 1.0.2 running on port ${PORT}`);
-});
+app.listen(PORT, () => console.log(`Stats Engine ${VERSION} running on port ${PORT}`));

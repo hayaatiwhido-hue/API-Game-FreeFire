@@ -1,6 +1,6 @@
 {
   "name": "stats-engine",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "private": true,
   "description": "Stats Engine para captura de MatchStats TeamData e PlayerData",
   "main": "server.js",
