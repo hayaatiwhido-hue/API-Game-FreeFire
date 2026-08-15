@@ -1,47 +1,72 @@
 <!doctype html>
-<html lang="pt-BR"><head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>Stats Engine 1.0.2</title>
 <style>
-:root{--bg:#070a10;--panel:#111620;--dark:#05080d;--line:#222b3a;--text:#f4f6fb;--muted:#8e98aa;--ok:#6ee7a0;--bad:#ff637d}
-*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font-family:Inter,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
-main{width:min(100%,920px);margin:auto;padding:30px 20px 60px}h1{font-size:34px;margin:0 0 8px}.sub{color:var(--muted);margin-bottom:28px}
-.badge{display:inline-flex;gap:9px;align-items:center;border:1px solid var(--line);border-radius:999px;padding:10px 15px;margin-bottom:22px}.dot{width:9px;height:9px;border-radius:50%;background:#788399}.dot.ok{background:var(--ok)}.dot.bad{background:var(--bad)}
-.card{background:var(--panel);border:1px solid var(--line);border-radius:22px;padding:22px;margin-bottom:20px}
-label,.caption{display:block;color:#9ba6b8;font-size:14px;text-transform:uppercase;margin-bottom:10px}
-input{width:100%;height:62px;border-radius:16px;border:1px solid #2b3546;background:#070b12;color:#fff;font-size:22px;padding:0 20px}
-.actions{display:flex;gap:10px;margin-top:16px;flex-wrap:wrap}button{border:0;border-radius:15px;padding:16px 22px;font-size:17px;font-weight:700;cursor:pointer}.start{background:#fff;color:#090b10}.stop{background:#273244;color:#fff}
-button:disabled{opacity:.45}.hint{color:var(--muted);margin-top:13px;line-height:1.45}.grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
-.stat{min-height:105px;background:var(--dark);border:1px solid var(--line);border-radius:16px;padding:18px}.stat small{display:block;color:#8f9aac;text-transform:uppercase;font-size:12px;margin-bottom:10px}.stat strong{font-size:27px;font-weight:500;word-break:break-word}
-pre{margin:0;background:var(--dark);border-radius:15px;padding:18px;overflow:auto;max-height:520px;color:#d8deea;font:13px/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;white-space:pre-wrap;word-break:break-word}
-@media(max-width:620px){main{padding:22px 18px 45px}h1{font-size:31px}.card{padding:18px;border-radius:20px}}
-</style></head>
-<body><main>
-<h1>Stats Engine 1.0.2</h1><div class="sub">MatchStats oficial · captura real · página persistente · atualização de 1 em 1 segundo</div>
-<div class="badge"><span id="dot" class="dot"></span><span id="status">PARADO</span></div>
-<section class="card"><label>Match ID</label><input id="matchId" inputmode="numeric" value="1">
-<div class="actions"><button class="start" id="start">▶ INICIAR</button><button class="stop" id="stop">■ PARAR</button></div>
-<div class="hint">O Engine abre o MatchStats uma única vez. A cada segundo ele lê a mesma página; não existe <b>page.goto()</b> dentro do loop.</div></section>
-<section class="card"><div class="grid">
-<div class="stat"><small>Consultas</small><strong id="consultations">0</strong></div>
-<div class="stat"><small>Alterações</small><strong id="changes">0</strong></div>
-<div class="stat"><small>Fase</small><strong id="phase">idle</strong></div>
-<div class="stat"><small>Intervalo</small><strong>1s</strong></div>
-</div></section>
-<section class="card"><div class="caption">Diagnóstico</div><pre id="diagnostic">{}</pre></section>
-<section class="card"><div class="caption">Dados reais capturados</div><pre id="data">Nenhuma partida monitorada.</pre></section>
+:root{color-scheme:dark;--bg:#070a10;--card:#111722;--card2:#090d14;--line:#222c3b;--text:#f4f7fb;--muted:#929baa;--accent:#ffb000;--ok:#42d392;--err:#ff5d78}
+*{box-sizing:border-box}body{margin:0;background:radial-gradient(circle at 20% -10%,#172033 0,#070a10 40%);color:var(--text);font-family:Inter,system-ui,-apple-system,Segoe UI,sans-serif}main{width:min(1050px,calc(100% - 28px));margin:30px auto 70px}h1{font-size:34px;margin:0 0 5px;letter-spacing:-.8px}.sub{color:var(--muted);margin-bottom:22px}.badge{display:inline-flex;gap:8px;border:1px solid var(--line);border-radius:999px;padding:9px 14px;color:var(--muted);margin-bottom:18px}.dot{width:9px;height:9px;border-radius:50%;background:var(--err)}.dot.ok{background:var(--ok)}.card{background:rgba(17,23,34,.94);border:1px solid var(--line);border-radius:20px;padding:22px;margin:16px 0;box-shadow:0 10px 40px #0003}.label{display:block;color:#a7afbd;font-size:13px;text-transform:uppercase;letter-spacing:.04em;margin-bottom:10px}input{width:100%;height:58px;border:1px solid #2b3546;background:#080c12;border-radius:15px;color:white;padding:0 18px;font-size:18px;outline:none}input:focus{border-color:#596b87}button{border:0;border-radius:13px;padding:14px 19px;font-size:16px;font-weight:700;cursor:pointer;margin-top:14px}button.primary{background:#fff;color:#0b0e14}button.secondary{background:#253043;color:#fff}button:disabled{opacity:.5;cursor:not-allowed}.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}.stat{background:#080c12;border:1px solid var(--line);border-radius:15px;padding:16px}.stat small{display:block;color:var(--muted);text-transform:uppercase;font-size:12px}.stat b{display:block;font-size:25px;margin-top:7px}.actions{display:flex;gap:10px;flex-wrap:wrap}.hidden{display:none}.status{font-weight:700}.status.ok{color:var(--ok)}.status.err{color:var(--err)}.toolbar{display:flex;align-items:center;justify-content:space-between;gap:12px}.tableWrap{overflow:auto;border:1px solid var(--line);border-radius:14px;background:#080c12;margin-top:12px}table{border-collapse:collapse;width:100%;min-width:650px}th,td{padding:11px 12px;border-bottom:1px solid #1c2431;text-align:left;font-size:13px;white-space:nowrap}th{color:#cbd2dd;background:#0d121a;position:sticky;top:0}td{color:#aeb7c6}.json{background:#05080d;border-radius:14px;padding:16px;white-space:pre;overflow:auto;max-height:360px;color:#cbd4e2;font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace}.sectionTitle{font-size:19px;margin:0}.empty{color:var(--muted);padding:18px 0}@media(max-width:720px){main{width:min(100% - 20px,1050px);margin-top:18px}h1{font-size:29px}.card{padding:16px;border-radius:17px}.stats{grid-template-columns:repeat(2,1fr)}.stat b{font-size:22px}.actions button{flex:1;min-width:130px}}
+</style>
+</head>
+<body>
+<main>
+  <h1>Stats Engine <span style="color:#ffb000">1.0.2</span></h1>
+  <div class="sub">MatchStats oficial · pesquisa automática · View · TeamData + PlayerData</div>
+  <div class="badge"><span id="dot" class="dot"></span><span id="status">AGUARDANDO</span></div>
+
+  <section class="card">
+    <label class="label">Match ID</label>
+    <input id="matchId" inputmode="numeric" autocomplete="off" placeholder="Ex.: 2088449371717292032">
+    <div class="actions">
+      <button id="start" class="primary">▶ INICIAR CAPTURA</button>
+      <button id="clear" class="secondary">■ LIMPAR</button>
+    </div>
+    <div class="sub" style="margin:12px 0 0">O Engine abre o MatchStats no servidor, pesquisa o MatchID e entra automaticamente em <b>View</b>. Não é necessário abrir o MatchStats no celular.</div>
+  </section>
+
+  <section class="card">
+    <div class="stats">
+      <div class="stat"><small>Consultas</small><b id="queries">0</b></div>
+      <div class="stat"><small>Alterações</small><b id="changes">0</b></div>
+      <div class="stat"><small>TeamData</small><b id="teams">0</b></div>
+      <div class="stat"><small>PlayerData</small><b id="players">0</b></div>
+    </div>
+  </section>
+
+  <section id="result" class="card hidden">
+    <div class="toolbar">
+      <div>
+        <div class="sectionTitle">Dados capturados</div>
+        <div id="source" class="sub" style="margin:5px 0 0"></div>
+      </div>
+      <div class="actions">
+        <button id="downloadAll" class="primary">⬇ BAIXAR TUDO</button>
+        <button id="downloadJson" class="secondary">JSON</button>
+      </div>
+    </div>
+    <div id="tables"></div>
+  </section>
+
+  <section class="card">
+    <div class="label">Diagnóstico</div>
+    <pre id="diagnostic" class="json">Nenhuma captura executada.</pre>
+  </section>
 </main>
 <script>
+let lastData=null;
 const $=id=>document.getElementById(id);
-$("start").onclick=async()=>{const matchId=$("matchId").value.trim();if(!matchId)return alert("Informe o Match ID.");$("start").disabled=true;
-try{const r=await fetch("/api/start",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({matchId})});const j=await r.json();if(!j.ok)alert(j.error||"Falha ao iniciar.");}catch{alert("Erro de conexão com o Engine.");}finally{$("start").disabled=false}};
-$("stop").onclick=async()=>{await fetch("/api/stop",{method:"POST"})};
-async function refresh(){try{
-const s=await fetch("/api/status",{cache:"no-store"}).then(r=>r.json());
-$("consultations").textContent=s.consultations??0;$("changes").textContent=s.changes??0;$("phase").textContent=s.phase||"idle";
-const err=!!s.error;$("status").textContent=err?"ERRO":s.running?"CAPTURANDO":"PARADO";$("dot").className="dot "+(err?"bad":s.running?"ok":"");
-$("diagnostic").textContent=JSON.stringify(s,null,2);
-const d=await fetch("/api/data",{cache:"no-store"}).then(r=>r.json());$("data").textContent=d.data?JSON.stringify(d.data,null,2):"Nenhuma partida monitorada.";
-}catch{$("status").textContent="SEM CONEXÃO";$("dot").className="dot bad"}}
-refresh();setInterval(refresh,1000);
-</script></body></html>
+function setStatus(text,kind=""){ $("status").textContent=text; $("dot").className="dot "+(kind==="ok"?"ok":""); $("status").className="status "+(kind==="ok"?"ok":kind==="err"?"err":""); }
+function download(name,content,type="application/json"){const blob=new Blob([content],{type});const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),500)}
+function csv(table){const esc=s=>`"${String(s??"").replaceAll('"','""')}"`;return [table.headers,...table.rows].map(r=>r.map(esc).join(",")).join("\\n")}
+function renderTable(table,label){const wrap=document.createElement("div");wrap.className="tableWrap";const h=document.createElement("h3");h.textContent=label;h.style.margin="22px 0 8px";wrap.parentNode;const t=document.createElement("table");t.innerHTML="<thead><tr>"+table.headers.map(x=>"<th>"+escapeHtml(x)+"</th>").join("")+"</tr></thead><tbody>"+table.rows.map(r=>"<tr>"+table.headers.map((_,i)=>"<td>"+escapeHtml(r[i]||"")+"</td>").join("")+"</tr>").join("")+"</tbody>";const holder=document.createElement("div");holder.append(h,t);const outer=document.createElement("div");outer.append(holder);return outer}
+function escapeHtml(s){return String(s??"").replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"}[m]))}
+function render(data){lastData=data;$("queries").textContent="1";$("changes").textContent=data.teamData.length+data.playerData.length;$("teams").textContent=data.teamData.length;$("players").textContent=data.playerData.length;$("source").textContent=`MatchID ${data.matchId} · ${data.capturedAt}`;$("diagnostic").textContent=JSON.stringify(data.diagnostics,null,2);$("tables").innerHTML="";let all=[];data.teamData.forEach((t,i)=>all.push(renderTable(t,"TeamData "+(i+1))));data.playerData.forEach((t,i)=>all.push(renderTable(t,"PlayerData "+(i+1))));if(!all.length)$("tables").innerHTML='<div class="empty">Nenhuma tabela TeamData/PlayerData foi localizada.</div>';else all.forEach(x=>$("tables").append(x));$("result").classList.remove("hidden")}
+$("start").onclick=async()=>{const matchId=$("matchId").value.trim();if(!matchId)return alert("Informe o MatchID.");$("start").disabled=true;$("clear").disabled=true;setStatus("CAPTURANDO");$("diagnostic").textContent="Abrindo MatchStats → pesquisando MatchID → entrando em View → capturando TeamData e PlayerData...";try{const r=await fetch("/api/match",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({matchId})});const j=await r.json();if(!r.ok||!j.ok)throw new Error(j.error||"Falha na captura.");render(j.data);setStatus("CAPTURA CONCLUÍDA","ok")}catch(e){setStatus("ERRO","err");$("diagnostic").textContent=String(e.message||e)}finally{$("start").disabled=false;$("clear").disabled=false}};
+$("clear").onclick=()=>{lastData=null;$("result").classList.add("hidden");$("diagnostic").textContent="Nenhuma captura executada.";$("matchId").value="";setStatus("AGUARDANDO");$("queries").textContent="0";$("changes").textContent="0";$("teams").textContent="0";$("players").textContent="0"};
+$("downloadJson").onclick=()=>{if(lastData)download(`MatchStats-${lastData.matchId}.json`,JSON.stringify(lastData,null,2))};
+$("downloadAll").onclick=()=>{if(!lastData)return;const payload={version:lastData.version,matchId:lastData.matchId,capturedAt:lastData.capturedAt,match:lastData.match,teamData:lastData.teamData,playerData:lastData.playerData};download(`MatchStats-${lastData.matchId}-TODOS-DADOS.json`,JSON.stringify(payload,null,2))};
+$("matchId").addEventListener("keydown",e=>{if(e.key==="Enter")$("start").click()});
+</script>
+</body>
+</html>

@@ -1,15 +1,32 @@
-# Stats Engine 1.0.1
+# Stats Engine 1.0.2
 
-Arquivos propositalmente na raiz para upload pelo celular.
+Arquivos propositalmente na RAIZ do projeto para facilitar upload pelo GitHub no celular.
 
-## Render
-Build Command:
-npm install && npx playwright install chromium
+## O que esta versão corrige
 
-Start Command:
-npm start
+- Playwright alinhado com a imagem Docker `v1.62.1-noble`, evitando o erro da 1.0.1:
+  `Executable doesn't exist ... chrome-headless-shell-1234`
+- MatchID é enviado ao servidor.
+- O servidor abre o MatchStats oficial.
+- Pesquisa o MatchID.
+- Entra automaticamente em `View`.
+- Captura as tabelas visíveis.
+- Classifica tabelas de TeamData e PlayerData.
+- Tenta acessar Player Data quando ele estiver em uma aba/controle separado.
+- Interface permite baixar todos os dados capturados em JSON.
 
-O serviço é Web Service, não Static Site.
+## Deploy no Render
 
-## Objetivo
-Corrigir a navegação duplicada da 1.0.0 e executar uma única navegação inicial antes de localizar a pesquisa.
+Use **Docker** como Runtime/Environment e deixe o Render construir a imagem pelo `Dockerfile`.
+
+Arquivos na raiz:
+- `Dockerfile`
+- `package.json`
+- `server.js`
+- `index.html`
+
+Não mova os arquivos para uma pasta.
+
+## Observação
+
+O MatchStats pode alterar HTML, seletores ou a forma como PlayerData é aberto. A captura foi feita de forma tolerante, procurando texto, atributos e tabelas em vez de depender de um único seletor.

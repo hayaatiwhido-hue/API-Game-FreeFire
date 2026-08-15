@@ -3,4 +3,4 @@ services:
     name: stats-engine
     runtime: docker
     plan: free
-    healthCheckPath: /health
+    healthCheckPath: /api/health
