@@ -1,365 +1,234 @@
-import express from "express";
-import axios from "axios";
-import * as cheerio from "cheerio";
-import crypto from "crypto";
+const express = require("express");
+const { chromium } = require("playwright");
 
 const app = express();
+app.use(express.json());
+
 const PORT = process.env.PORT || 10000;
+const MATCHSTATS = "https://matchstats.us.ffesports.com/";
+const INTERVAL = 1000;
 
-const MATCHSTATS_BASE = "https://matchstats.us.ffesports.com";
-const SEARCH_URL = (matchId) =>
-  `${MATCHSTATS_BASE}/match?search=${encodeURIComponent(matchId)}`;
-
-app.use(express.json({ limit: "1mb" }));
-app.use(express.static("."));
-
-const state = {
-  running: false,
+let browser = null;
+let page = null;
+let state = {
+  status: "IDLE",
+  phase: "idle",
   matchId: null,
-  timer: null,
-  clients: new Set(),
+  currentUrl: null,
+  title: null,
   consultations: 0,
   changes: 0,
-  lastHash: null,
   lastUpdate: null,
-  lastError: null,
-  data: null
+  data: null,
+  error: null
 };
+let timer = null;
+let lastSignature = "";
 
-function clean(value) {
-  return String(value ?? "")
-    .replace(/\u00a0/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
+async function ensurePage() {
+  if (!browser) {
+    browser = await chromium.launch({ headless: true, args: ["--no-sandbox", "--disable-setuid-sandbox"] });
+  }
+  if (!page || page.isClosed()) {
+    page = await browser.newPage({ viewport: { width: 1365, height: 900 } });
+    page.setDefaultNavigationTimeout(30000);
+    page.setDefaultTimeout(10000);
+  }
+  return page;
 }
 
-function absoluteUrl(href) {
-  if (!href) return null;
-  try { return new URL(href, MATCHSTATS_BASE).href; }
-  catch { return null; }
+async function loadHome(p) {
+  state.phase = "opening";
+  // Important: one navigation only. Do not call goto twice while the site redirects.
+  await p.goto(MATCHSTATS, { waitUntil: "domcontentloaded" });
+  await p.waitForLoadState("networkidle", { timeout: 15000 }).catch(() => {});
+  await p.waitForTimeout(1000);
 }
 
-function unique(arr) {
-  return [...new Set(arr.filter(Boolean))];
-}
-
-function parseTables($, root) {
-  const tables = [];
-  $(root).find("table").each((index, table) => {
-    const rows = [];
-    $(table).find("tr").each((_, tr) => {
-      const cells = $(tr).find("th,td").map((__, cell) => clean($(cell).text())).get();
-      if (cells.length) rows.push(cells);
-    });
-    if (rows.length) {
-      let headers = [];
-      let body = rows;
-
-      const first = rows[0];
-      const hasTh = $(table).find("tr").first().find("th").length > 0;
-      if (hasTh) {
-        headers = first;
-        body = rows.slice(1);
-      }
-
-      tables.push({
-        index,
-        headers,
-        rows: body,
-        rowCount: body.length
-      });
-    }
-  });
-  return tables;
-}
-
-function parseDefinitionLists($, root) {
-  const meta = {};
-  $(root).find("dt").each((_, dt) => {
-    const key = clean($(dt).text());
-    const value = clean($(dt).next("dd").text());
-    if (key && value) meta[key] = value;
-  });
-  return meta;
-}
-
-function extractViewCandidates($) {
-  const candidates = [];
-
-  $("a").each((_, a) => {
-    const text = clean($(a).text()).toLowerCase();
-    const href = $(a).attr("href");
-    const url = absoluteUrl(href);
-    if (!url) return;
-
-    const score =
-      (text === "view" ? 100 : 0) +
-      (text.includes("view") ? 30 : 0) +
-      (href?.toLowerCase().includes("view") ? 20 : 0) +
-      (href?.toLowerCase().includes("match") ? 10 : 0);
-
-    if (score > 0) candidates.push({ url, text, score });
-  });
-
-  // Also inspect forms/buttons that may carry the target in attributes.
-  $("form").each((_, form) => {
-    const action = absoluteUrl($(form).attr("action"));
-    if (action) candidates.push({ url: action, text: "form", score: 5 });
-  });
-
-  const seen = new Set();
-  return candidates
-    .sort((a,b) => b.score - a.score)
-    .filter(x => !seen.has(x.url) && seen.add(x.url));
-}
-
-function looksLikeMatchPage(tables, html) {
-  const text = clean(cheerio.load(html)("body").text()).toLowerCase();
-  const signals = [
-    "player", "team", "kill", "rank", "position", "points",
-    "damage", "match id", "nickname", "uid"
+async function findSearchInput(p) {
+  const selectors = [
+    'input[type="search"]',
+    'input[placeholder*="Search" i]',
+    'input[placeholder*="Match" i]',
+    'input[name*="search" i]',
+    'input[id*="search" i]',
+    'input'
   ];
-  const score = signals.filter(s => text.includes(s)).length;
-  return tables.length > 0 && score >= 2;
-}
-
-function chooseSearchResult($, requestedId) {
-  const requested = String(requestedId);
-
-  const rows = [];
-  $("table tr").each((_, tr) => {
-    const cells = $(tr).find("th,td").map((__, c) => clean($(c).text())).get();
-    if (!cells.length) return;
-
-    const links = $(tr).find("a").map((__, a) => ({
-      text: clean($(a).text()),
-      href: absoluteUrl($(a).attr("href"))
-    })).get().filter(x => x.href);
-
-    rows.push({ cells, links });
-  });
-
-  // Prefer a row whose first cell equals the requested Match ID.
-  for (const row of rows) {
-    if (row.cells.some(c => c === requested)) {
-      const view = row.links.find(l => l.text.toLowerCase() === "view")
-        || row.links.find(l => l.text.toLowerCase().includes("view"));
-      if (view) return view.href;
+  for (const selector of selectors) {
+    const loc = p.locator(selector).first();
+    if (await loc.count()) {
+      try {
+        if (await loc.isVisible()) return loc;
+      } catch {}
     }
   }
-
-  // Otherwise prefer any explicit View link. This matches the current
-  // MatchStats search page, where the result table exposes a View operation.
-  const views = [];
-  $("a").each((_, a) => {
-    const text = clean($(a).text()).toLowerCase();
-    const href = absoluteUrl($(a).attr("href"));
-    if (href && text.includes("view")) views.push(href);
-  });
-
-  return views[0] || null;
+  return null;
 }
 
-async function getHtml(url) {
-  const response = await axios.get(url, {
-    timeout: 15000,
-    maxRedirects: 5,
-    validateStatus: s => s >= 200 && s < 400,
-    headers: {
-      "User-Agent": "Mozilla/5.0 (Android 13; Mobile) AppleWebKit/537.36 Chrome/124 Safari/537.36",
-      "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-      "Accept-Language": "en-US,en;q=0.9,pt-BR;q=0.8",
-      "Cache-Control": "no-cache"
+async function clickSearch(p, input) {
+  const candidates = [
+    'button:has-text("Search")',
+    'button:has-text("Pesquisar")',
+    'input[type="submit"]',
+    'button[type="submit"]'
+  ];
+  for (const selector of candidates) {
+    const b = p.locator(selector).first();
+    if (await b.count()) {
+      try {
+        if (await b.isVisible()) {
+          await b.click();
+          return true;
+        }
+      } catch {}
     }
+  }
+  await input.press("Enter");
+  return true;
+}
+
+async function extractTables(p) {
+  return await p.evaluate(() => {
+    const tables = [...document.querySelectorAll("table")].map((table, index) => ({
+      index,
+      rows: [...table.querySelectorAll("tr")].map(tr =>
+        [...tr.querySelectorAll("th,td")].map(td => (td.innerText || "").trim())
+      ).filter(row => row.length)
+    })).filter(t => t.rows.length);
+    return {
+      url: location.href,
+      title: document.title,
+      tables,
+      bodyText: (document.body?.innerText || "").slice(0, 50000)
+    };
   });
-  return { html: response.data, finalUrl: response.request?.res?.responseUrl || url };
 }
 
-async function scrapeMatch(matchId) {
-  if (!matchId) throw new Error("Informe um Match ID.");
+async function searchAndOpenMatch(matchId) {
+  const p = await ensurePage();
+  state.error = null;
+  state.status = "SEARCHING";
+  state.phase = "opening";
+  state.currentUrl = p.url();
 
-  const search = await getHtml(SEARCH_URL(matchId));
-  const $search = cheerio.load(search.html);
+  await loadHome(p);
+  state.currentUrl = p.url();
+  state.title = await p.title().catch(() => "");
 
-  const searchTables = parseTables($search, "body");
-  const viewUrl = chooseSearchResult($search, matchId);
-
-  if (!viewUrl) {
-    return {
-      found: false,
-      matchId: String(matchId),
-      source: SEARCH_URL(matchId),
-      stage: "search",
-      message: "A pesquisa abriu, mas nenhum resultado com link 'View' foi encontrado."
-    };
+  state.phase = "search";
+  const input = await findSearchInput(p);
+  if (!input) {
+    throw new Error("Campo de pesquisa do MatchStats não foi localizado.");
   }
 
-  const detail = await getHtml(viewUrl);
-  const $detail = cheerio.load(detail.html);
+  state.phase = "searching";
+  await input.fill(String(matchId));
+  await clickSearch(p, input);
+  await p.waitForTimeout(1200);
 
-  const tables = parseTables($detail, "body");
-  const meta = parseDefinitionLists($detail, "body");
+  state.currentUrl = p.url();
+  const result = await extractTables(p);
 
-  const title = clean($detail("title").first().text()) || "MatchStats";
-  const headings = unique(
-    $detail("h1,h2,h3,h4").map((_, el) => clean($detail(el).text())).get()
-  );
-
-  if (!tables.length && !looksLikeMatchPage(tables, detail.html)) {
-    return {
-      found: true,
-      matchId: String(matchId),
-      source: viewUrl,
-      stage: "detail",
-      title,
-      headings,
-      meta,
-      tables: [],
-      message: "A página da partida foi aberta, mas nenhum quadro HTML foi encontrado."
-    };
+  // Locate a row containing the requested Match ID.
+  const rows = result.tables.flatMap(t => t.rows);
+  const matchText = String(matchId);
+  const row = rows.find(r => r.some(cell => cell.trim() === matchText));
+  if (!row) {
+    // Keep real page data for diagnosis, but do not pretend it is the match.
+    return { found: false, result };
   }
 
-  return {
-    found: true,
-    matchId: String(matchId),
-    source: viewUrl,
-    stage: "detail",
-    capturedAt: new Date().toISOString(),
-    title,
-    headings,
-    meta,
-    tables
-  };
+  state.phase = "match-found";
+
+  // Try to locate a View link/button associated with the row.
+  const opened = await p.evaluate((matchText) => {
+    const allRows = [...document.querySelectorAll("tr")];
+    const target = allRows.find(tr =>
+      [...tr.querySelectorAll("th,td")].some(td => (td.innerText || "").trim() === matchText)
+    );
+    if (!target) return false;
+    const clickable = target.querySelector('a[href], button');
+    if (!clickable) return false;
+    const text = (clickable.innerText || clickable.textContent || "").trim().toLowerCase();
+    if (text.includes("view") || text.includes("ver") || clickable.tagName === "A") {
+      clickable.click();
+      return true;
+    }
+    return false;
+  }, matchText);
+
+  if (opened) {
+    await p.waitForTimeout(1200);
+  }
+
+  const finalData = await extractTables(p);
+  return { found: true, result: finalData, opened };
 }
 
-function hashData(data) {
-  return crypto.createHash("sha256")
-    .update(JSON.stringify(data))
-    .digest("hex");
-}
-
-function publicState() {
-  return {
-    running: state.running,
-    matchId: state.matchId,
-    consultations: state.consultations,
-    changes: state.changes,
-    lastUpdate: state.lastUpdate,
-    lastError: state.lastError,
-    data: state.data
-  };
-}
-
-function broadcast() {
-  const payload = `data: ${JSON.stringify(publicState())}\n\n`;
-  for (const res of state.clients) res.write(payload);
-}
-
-async function tick() {
-  if (!state.running || !state.matchId) return;
-
+async function poll() {
+  if (!state.matchId) return;
   try {
-    const data = await scrapeMatch(state.matchId);
+    const data = await searchAndOpenMatch(state.matchId);
     state.consultations++;
-    state.lastError = null;
     state.lastUpdate = new Date().toISOString();
-
-    const nextHash = hashData(data);
-    if (nextHash !== state.lastHash) {
-      state.changes++;
-      state.lastHash = nextHash;
-      state.data = data;
-    } else if (state.data) {
-      // Keep the original data but update the capture timestamp.
-      state.data = { ...state.data, capturedAt: state.lastUpdate };
-    } else {
-      state.data = data;
+    if (!data.found) {
+      state.status = "WAITING";
+      state.phase = "result-not-found";
+      state.data = data.result;
+      const sig = JSON.stringify(data.result.tables);
+      if (sig !== lastSignature) { state.changes++; lastSignature = sig; }
+      return;
     }
-  } catch (error) {
-    state.consultations++;
-    state.lastError = error?.message || String(error);
+    state.status = "CONNECTED";
+    state.phase = "captured";
+    state.data = data.result;
+    const sig = JSON.stringify(data.result.tables);
+    if (sig !== lastSignature) { state.changes++; lastSignature = sig; }
+  } catch (err) {
+    state.status = "ERROR";
+    state.error = err.message;
     state.lastUpdate = new Date().toISOString();
   }
-
-  broadcast();
 }
 
-function stopMonitor() {
-  state.running = false;
-  if (state.timer) clearInterval(state.timer);
-  state.timer = null;
-  broadcast();
-}
+app.get("/", (req,res) => res.sendFile(path.join(__dirname, "index.html")));
+app.get("/api/status", (req,res) => res.json(state));
 
-function startMonitor(matchId) {
-  stopMonitor();
-  state.running = true;
-  state.matchId = String(matchId);
-  state.consultations = 0;
-  state.changes = 0;
-  state.lastHash = null;
-  state.lastUpdate = null;
-  state.lastError = null;
-  state.data = null;
-
-  tick();
-  state.timer = setInterval(tick, 1000);
-}
-
-app.get("/api/health", (_, res) => {
-  res.json({
-    ok: true,
-    engine: "Stats Engine V3",
-    matchstats: MATCHSTATS_BASE,
-    intervalMs: 1000
-  });
+app.post("/api/start", async (req,res) => {
+  const id = String(req.body.matchId || "").trim();
+  if (!id) return res.status(400).json({ error: "Informe o Match ID." });
+  if (timer) clearInterval(timer);
+  state = { status:"STARTING", phase:"opening", matchId:id, currentUrl:null, title:null, consultations:0, changes:0, lastUpdate:null, data:null, error:null };
+  lastSignature = "";
+  poll();
+  timer = setInterval(poll, INTERVAL);
+  res.json(state);
 });
 
-app.get("/api/state", (_, res) => res.json(publicState()));
-
-app.post("/api/monitor/start", (req, res) => {
-  const matchId = String(req.body?.matchId ?? "").trim();
-  if (!matchId) return res.status(400).json({ error: "Match ID obrigatório." });
-  startMonitor(matchId);
-  res.json({ ok: true, state: publicState() });
+app.post("/api/stop", (req,res) => {
+  if (timer) clearInterval(timer);
+  timer = null;
+  state.status = "STOPPED";
+  state.phase = "idle";
+  res.json(state);
 });
 
-app.post("/api/monitor/stop", (_, res) => {
-  stopMonitor();
-  res.json({ ok: true, state: publicState() });
-});
-
-app.get("/api/events", (req, res) => {
-  res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
-  res.setHeader("Cache-Control", "no-cache, no-transform");
-  res.setHeader("Connection", "keep-alive");
-  res.flushHeaders?.();
-
-  state.clients.add(res);
-  res.write(`data: ${JSON.stringify(publicState())}\n\n`);
-
-  const heartbeat = setInterval(() => res.write(": heartbeat\n\n"), 15000);
-
-  req.on("close", () => {
-    clearInterval(heartbeat);
-    state.clients.delete(res);
-  });
-});
-
-app.get("/api/match/:id", async (req, res) => {
+app.get("/api/match/:id", async (req,res) => {
   try {
-    const data = await scrapeMatch(req.params.id);
-    res.json(data);
-  } catch (error) {
-    res.status(502).json({
-      found: false,
-      error: error?.message || String(error)
-    });
+    const result = await searchAndOpenMatch(String(req.params.id));
+    res.json(result);
+  } catch (e) {
+    res.status(500).json({ error:e.message });
   }
 });
 
-app.get("*", (_, res) => res.sendFile("index.html", { root: "." }));
+app.get("/api/health", (req,res) => res.json({ ok:true, version:"1.0.1" }));
 
-app.listen(PORT, "0.0.0.0", () => {
-  console.log(`Stats Engine V3 listening on 0.0.0.0:${PORT}`);
+const path = require("path");
+app.listen(PORT, "0.0.0.0", () => console.log(`Stats Engine 1.0.1 running on ${PORT}`));
+
+process.on("SIGTERM", async () => {
+  if (timer) clearInterval(timer);
+  if (browser) await browser.close().catch(()=>{});
+  process.exit(0);
 });

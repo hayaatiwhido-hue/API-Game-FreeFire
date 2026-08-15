@@ -1,7 +1,9 @@
 services:
   - type: web
-    name: stats-engine-v3
+    name: stats-engine
     runtime: node
-    buildCommand: npm install
+    buildCommand: npm install && npx playwright install chromium
     startCommand: npm start
-    autoDeploy: true
+    envVars:
+      - key: NODE_VERSION
+        value: 22

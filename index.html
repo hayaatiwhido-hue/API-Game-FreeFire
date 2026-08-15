@@ -1,121 +1,29 @@
 <!doctype html>
 <html lang="pt-BR">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<title>Stats Engine V3</title>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Stats Engine 1.0.1</title>
 <style>
-:root{color-scheme:dark;font-family:Inter,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#070a10;color:#f4f6fb}
-*{box-sizing:border-box}body{margin:0;background:#070a10}main{width:min(1100px,100%);margin:auto;padding:20px}
-h1{margin:0;font-size:28px}.sub{color:#8993a5;margin:5px 0 20px}
-.card{background:#101520;border:1px solid #202a3a;border-radius:18px;padding:18px;margin:14px 0}
-label{display:block;color:#8f9bad;font-size:12px;font-weight:700;text-transform:uppercase;margin-bottom:8px}
-input{width:100%;background:#080c13;border:1px solid #293449;border-radius:12px;padding:15px;color:white;font-size:17px;outline:none}
-.actions{display:flex;gap:10px;margin-top:12px}button{border:0;border-radius:11px;padding:13px 18px;font-weight:800;font-size:15px;cursor:pointer}#start{background:#fff;color:#090c12}#stop{background:#273143;color:#fff}
-.status{display:inline-flex;align-items:center;gap:8px;border:1px solid #293449;border-radius:999px;padding:8px 12px;color:#b7c0cf;font-size:13px}.dot{width:8px;height:8px;border-radius:50%;background:#66748b}.on .dot{background:#55d88a}
-.grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}.metric{background:#080c13;border:1px solid #202b3b;border-radius:13px;padding:14px}.metric span{display:block;color:#8b95a7;font-size:11px;text-transform:uppercase}.metric b{display:block;font-size:24px;margin-top:5px}
-#result{overflow:auto}.source{color:#8993a5;font-size:12px;word-break:break-all}.error{background:#2b1518;border:1px solid #5b282e;color:#ffb5bc;padding:12px;border-radius:10px}
-h2{font-size:16px;margin:0 0 12px}table{width:100%;border-collapse:collapse;min-width:600px}th,td{padding:10px 9px;border-bottom:1px solid #202a3a;text-align:left;font-size:13px}th{color:#aeb8c8;font-weight:700;background:#0b1018;position:sticky;top:0}
-.tablewrap{overflow:auto;border:1px solid #202a3a;border-radius:12px;margin:12px 0}
-.empty{color:#8993a5;background:#080c13;padding:14px;border-radius:10px}
-.badge{display:inline-block;padding:5px 8px;border-radius:999px;background:#172233;color:#c8d3e5;font-size:11px;margin:3px}
-@media(max-width:700px){main{padding:14px}.grid{grid-template-columns:repeat(2,1fr)}h1{font-size:25px}.card{padding:14px}.actions button{flex:1}}
+*{box-sizing:border-box}body{margin:0;background:#080b11;color:#eef2f7;font:15px Arial,sans-serif}main{max-width:760px;margin:auto;padding:24px 18px}.sub{color:#8993a3;margin-top:-10px}.badge{display:inline-flex;border:1px solid #263142;border-radius:999px;padding:8px 13px;margin:16px 0}.dot{width:9px;height:9px;border-radius:50%;background:#64748b;margin:4px 8px 0 0}.card{background:#111722;border:1px solid #232d3d;border-radius:18px;padding:20px;margin:18px 0}label{display:block;color:#9aa5b5;font-size:12px;text-transform:uppercase;margin-bottom:9px}input{width:100%;background:#080c12;border:1px solid #293446;color:white;border-radius:13px;padding:17px;font-size:18px}button{border:0;border-radius:13px;padding:15px 22px;margin:12px 6px 0 0;font-weight:bold;font-size:15px}#start{background:white;color:#111}#stop{background:#263143;color:white}.grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}.stat{background:#080c12;border:1px solid #232d3d;border-radius:13px;padding:14px}.stat small{display:block;color:#8792a3;text-transform:uppercase}.stat b{display:block;font-size:25px;margin-top:7px}.box{background:#05080d;border-radius:13px;padding:14px;white-space:pre-wrap;overflow:auto;max-height:520px;font-family:monospace;font-size:12px;color:#cbd5e1}.ok{background:#22c55e}.bad{background:#fb7185}.warn{background:#f59e0b}
 </style>
 </head>
-<body>
-<main>
-  <h1>Stats Engine V3</h1>
-  <div class="sub">MatchStats oficial · partida específica · atualização automática de 1 em 1 segundo</div>
-
-  <div id="status" class="status"><i class="dot"></i><span>PARADO</span></div>
-
-  <section class="card">
-    <label for="matchId">Match ID</label>
-    <input id="matchId" inputmode="numeric" value="1" placeholder="Ex.: 1">
-    <div class="actions">
-      <button id="start">▶ INICIAR</button>
-      <button id="stop">■ PARAR</button>
-    </div>
-  </section>
-
-  <section class="card">
-    <div class="grid">
-      <div class="metric"><span>Consultas</span><b id="consultas">0</b></div>
-      <div class="metric"><span>Alterações</span><b id="alteracoes">0</b></div>
-      <div class="metric"><span>Última atualização</span><b id="ultima">—</b></div>
-      <div class="metric"><span>Intervalo</span><b>1s</b></div>
-    </div>
-  </section>
-
-  <section class="card">
-    <h2>Partida encontrada</h2>
-    <div id="result"><div class="empty">Nenhuma partida monitorada.</div></div>
-  </section>
+<body><main>
+<h1>Stats Engine <small>1.0.1</small></h1>
+<p class="sub">MatchStats oficial · captura real · atualização de 1 em 1 segundo</p>
+<div class="badge"><i id="dot" class="dot"></i><span id="status">PARADO</span></div>
+<section class="card"><label>Match ID</label><input id="matchId" value="1" inputmode="numeric"><button id="start">▶ INICIAR</button><button id="stop">■ PARAR</button><p class="sub">O Engine consulta o MatchStats no servidor e não exige recarregar esta página.</p></section>
+<section class="card grid">
+<div class="stat"><small>Consultas</small><b id="consultas">0</b></div><div class="stat"><small>Alterações</small><b id="changes">0</b></div>
+<div class="stat"><small>Fase</small><b id="phase">idle</b></div><div class="stat"><small>Intervalo</small><b>1s</b></div>
+</section>
+<section class="card"><label>Diagnóstico</label><div id="diag" class="box">Aguardando.</div></section>
+<section class="card"><label>Dados reais capturados</label><div id="data" class="box">Nenhuma partida monitorada.</div></section>
 </main>
-
 <script>
-const $=s=>document.querySelector(s);
-const statusEl=$("#status"), resultEl=$("#result");
-let es;
-
-function setStatus(on,text){statusEl.classList.toggle("on",on);statusEl.querySelector("span").textContent=text}
-
-function esc(v){return String(v??"").replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"}[m]))}
-
-function renderTable(t){
-  const head=t.headers?.length?t.headers.map(x=>`<th>${esc(x)}</th>`).join(""):"";
-  const rows=(t.rows||[]).map(r=>`<tr>${r.map(c=>`<td>${esc(c)}</td>`).join("")}</tr>`).join("");
-  return `<div class="tablewrap"><table>${head?`<thead><tr>${head}</tr></thead>`:""}<tbody>${rows}</tbody></table></div>`;
-}
-
-function render(data){
-  if(!data){resultEl.innerHTML='<div class="empty">Nenhuma partida monitorada.</div>';return}
-  if(data.error){resultEl.innerHTML=`<div class="error">${esc(data.error)}</div>`;return}
-  if(data.found===false){resultEl.innerHTML=`<div class="error">${esc(data.message||"Partida não encontrada.")}</div>`;return}
-
-  const meta=Object.entries(data.meta||{}).map(([k,v])=>`<span class="badge">${esc(k)}: ${esc(v)}</span>`).join("");
-  const tables=(data.tables||[]).map((t,i)=>`<h2>Dados ${i+1}</h2>${renderTable(t)}`).join("");
-
-  resultEl.innerHTML=`
-    <div><strong>${esc(data.title||"MatchStats")}</strong></div>
-    <div style="margin:8px 0">${meta||""}</div>
-    <div class="source">Fonte: ${esc(data.source||"")}</div>
-    ${data.headings?.length?`<div style="margin:8px 0">${data.headings.map(h=>`<span class="badge">${esc(h)}</span>`).join("")}</div>`:""}
-    ${tables||'<div class="empty">A página específica foi encontrada, mas ainda não há tabelas HTML para exibir.</div>'}
-  `;
-}
-
-function apply(s){
-  $("#consultas").textContent=s.consultations??0;
-  $("#alteracoes").textContent=s.changes??0;
-  $("#ultima").textContent=s.lastUpdate?new Date(s.lastUpdate).toLocaleTimeString():"—";
-  setStatus(!!s.running,s.running?"MONITORANDO":"PARADO");
-  if(s.lastError) resultEl.innerHTML=`<div class="error">${esc(s.lastError)}</div>`;
-  else if(s.data) render(s.data);
-}
-
-function connectEvents(){
-  if(es) es.close();
-  es=new EventSource("/api/events");
-  es.onmessage=e=>{try{apply(JSON.parse(e.data))}catch{}};
-  es.onerror=()=>setStatus(false,"RECONEXÃO...");
-}
-
-$("#start").onclick=async()=>{
-  const matchId=$("#matchId").value.trim();
-  if(!matchId)return;
-  const r=await fetch("/api/monitor/start",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({matchId})});
-  apply((await r.json()).state);
-  connectEvents();
-};
-
-$("#stop").onclick=async()=>{
-  const r=await fetch("/api/monitor/stop",{method:"POST"});
-  apply((await r.json()).state);
-};
-
-connectEvents();
-fetch("/api/state").then(r=>r.json()).then(apply);
-</script>
-</body>
-</html>
+const $=id=>document.getElementById(id);
+async function api(url,opt){let r=await fetch(url,opt);return r.json()}
+$("start").onclick=async()=>{await api("/api/start",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({matchId:$("matchId").value})});update()};
+$("stop").onclick=async()=>{await api("/api/stop",{method:"POST"});update()};
+async function update(){try{let s=await api("/api/status");$("status").textContent=s.status;$("dot").className="dot "+(s.status==="CONNECTED"?"ok":s.status==="ERROR"?"bad":"warn");$("consultas").textContent=s.consultations;$("changes").textContent=s.changes;$("phase").textContent=s.phase; $("diag").textContent=JSON.stringify({status:s.status,phase:s.phase,matchId:s.matchId,currentUrl:s.currentUrl,title:s.title,lastUpdate:s.lastUpdate,error:s.error},null,2);$("data").textContent=s.data?JSON.stringify(s.data,null,2):"Nenhuma partida monitorada."}catch(e){}}
+setInterval(update,1000);update();
+</script></body></html>
