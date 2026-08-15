@@ -264,36 +264,85 @@ async function clickTab(page, label) {
 async function extractSection(page, section) {
   await clickTab(page, section);
 
-  // Espera somente até a tabela da seção aparecer. Se já estiver presente,
-  // continua imediatamente.
-  const deadline = Date.now() + 5000;
+  const deadline = Date.now() + 4500;
+
   while (Date.now() < deadline) {
-    const tables = await page.locator("table").count();
-    if (tables) {
-      const matrix = await page.evaluate(() => {
-        const clean = v => String(v ?? "").replace(/\s+/g, " ").trim();
-        const visible = [...document.querySelectorAll("table")].filter(t => {
-          const r = t.getBoundingClientRect();
-          return r.width > 0 && r.height > 0;
-        });
-        let best = null, bestScore = -1;
-        for (const table of visible) {
-          const rows = [...table.querySelectorAll("tr")];
-          if (!rows.length) continue;
-          const matrix = rows.map(r => [...r.querySelectorAll("th,td")].map(c => clean(c.innerText)));
-          const header = (matrix[0] || []).join(" | ").toLowerCase();
-          let score = matrix.length * 3;
-          if (/team id|team name|match id/.test(header)) score += 40;
-          if (/nickname|uid|player/.test(header)) score += 40;
-          if (/kill|headshot|survival|revival|rescue|damage/.test(header)) score += 10;
-          if (matrix.length >= 2 && score > bestScore) { bestScore = score; best = matrix; }
-        }
-        return best || [];
+    const matrix = await page.evaluate((wantedSection) => {
+      const clean = v => String(v ?? "").replace(/\s+/g, " ").trim();
+
+      const tables = [...document.querySelectorAll("table")].filter(t => {
+        const r = t.getBoundingClientRect();
+        return r.width > 0 && r.height > 0;
       });
-      if (matrix.length >= 2) return matrix;
-    }
-    await page.waitForTimeout(100);
+
+      let best = null;
+      let bestScore = -1;
+
+      for (const table of tables) {
+        const theadRows = [...table.querySelectorAll("thead tr")];
+        const tbodyRows = [...table.querySelectorAll("tbody tr")];
+
+        let header = [];
+        let body = [];
+
+        if (theadRows.length) {
+          const headerRows = theadRows.map(tr =>
+            [...tr.querySelectorAll("th,td")].map(c => clean(c.innerText))
+          );
+
+          const width = Math.max(0, ...headerRows.map(r => r.length));
+          header = Array.from({length: width}, (_, col) => {
+            return headerRows
+              .map(row => row[col] || "")
+              .filter(Boolean)
+              .join(" / ");
+          });
+
+          body = tbodyRows.map(tr =>
+            [...tr.querySelectorAll("td,th")].map(c => clean(c.innerText))
+          );
+        } else {
+          const rows = [...table.querySelectorAll("tr")].map(tr =>
+            [...tr.querySelectorAll("th,td")].map(c => clean(c.innerText))
+          );
+
+          if (!rows.length) continue;
+          header = rows[0] || [];
+          body = rows.slice(1);
+        }
+
+        if (!header.length || !body.length) continue;
+
+        const h = header.join(" | ").toLowerCase();
+
+        let score = body.length * 3;
+
+        if (wantedSection === "Team Data") {
+          if (/team id|team name|match id/.test(h)) score += 80;
+          if (/total score|survival score|damage|kill|headshot/.test(h)) score += 35;
+          if (/uid|nickname|player/.test(h)) score -= 15;
+        } else {
+          if (/nickname|uid|player id|player name/.test(h)) score += 80;
+          if (/kill|headshot|survival|revival|rescue|damage/.test(h)) score += 35;
+          if (/team name|team id/.test(h)) score += 10;
+        }
+
+        if (header.length >= 4) score += 10;
+
+        if (score > bestScore) {
+          bestScore = score;
+          best = [header, ...body];
+        }
+      }
+
+      return best || [];
+    }, section);
+
+    if (matrix.length >= 2) return matrix;
+
+    await page.waitForTimeout(80);
   }
+
   return [];
 }
 
@@ -323,8 +372,48 @@ async function capture(matchId) {
   };
 }
 
+
+app.get("/api/refresh", async (req, res) => {
+  const matchId = String(req.query?.matchId || "").trim();
+
+  if (!/^\d+$/.test(matchId)) {
+    return res.status(400).json({ ok: false, error: "O MatchID deve conter apenas números." });
+  }
+
+  if (!page) {
+    return res.status(409).json({ ok: false, error: "Nenhuma captura ativa. Inicie a captura primeiro." });
+  }
+
+  try {
+    const current = await page.evaluate(() => location.href);
+    if (!/match/i.test(current) || /\/match\/?$/.test(current)) {
+      return res.status(409).json({ ok: false, error: "A página da partida não está aberta." });
+    }
+
+    // Lê novamente as duas abas da página atual. Não refaz a pesquisa.
+    const team = await extractSection(page, "Team Data");
+    const player = await extractSection(page, "Player Data");
+
+    const result = {
+      matchId,
+      sourceUrl: page.url(),
+      capturedAt: new Date().toISOString(),
+      teamData: team.length ? team : (lastResult?.teamData || []),
+      playerData: player.length ? player : (lastResult?.playerData || [])
+    };
+
+    lastResult = { ...(lastResult || {}), ...result };
+    return res.json({ ok: true, result });
+  } catch (e) {
+    return res.status(500).json({
+      ok: false,
+      error: e?.message || "Falha na atualização."
+    });
+  }
+});
+
 app.get("/api/health", (req, res) => {
-  res.json({ ok: true, version: "1.0.9", busy, hasBrowser: !!browser });
+  res.json({ ok: true, version: "1.0.10", busy, hasBrowser: !!browser });
 });
 
 app.post("/api/capture", async (req, res) => {
@@ -362,7 +451,7 @@ app.get("/api/last", (req, res) => {
 });
 
 app.listen(PORT, "0.0.0.0", () => {
-  console.log(`Stats Engine 1.0.9 running on port ${PORT}`);
+  console.log(`Stats Engine 1.0.10 running on port ${PORT}`);
 });
 
 process.on("SIGTERM", async () => {

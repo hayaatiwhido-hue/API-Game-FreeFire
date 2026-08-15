@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
-<title>Stats Engine 1.0.9</title>
+<title>Stats Engine 1.0.10</title>
 <style>
 :root{
   --bg:#070a11; --panel:#101722; --panel2:#0a0e15; --line:#273244;
@@ -36,10 +36,16 @@ button:disabled{opacity:.55;cursor:wait}
 .tabs{display:flex;gap:8px;border-bottom:1px solid var(--line);margin:0 -22px;padding:0 22px}
 .tab{background:transparent;color:var(--muted);height:48px;border-radius:0;border-bottom:2px solid transparent}
 .tab.active{color:var(--accent);border-color:var(--accent)}
-.tablebox{overflow:auto;border:1px solid #202a39;border-radius:14px;margin-top:16px;max-height:620px}
-table{border-collapse:separate;border-spacing:0;min-width:100%;white-space:nowrap;font-size:12px}
-th{position:sticky;top:0;background:#090d14;color:#b8c0cc;text-transform:uppercase;font-size:10px;letter-spacing:.04em;text-align:left;padding:13px 12px;border-bottom:1px solid #273244;z-index:2}
-td{padding:12px;border-bottom:1px solid #18212e;color:#e8ebef}
+.tablebox{overflow:auto;border:1px solid #202a39;border-radius:14px;margin-top:16px;max-height:620px;background:#080c13}
+.section-head{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-top:16px;padding:4px 2px 2px}
+.section-head strong{font-size:16px;color:var(--text)}
+.section-head span{font-size:12px;color:var(--muted)}
+table{border-collapse:separate;border-spacing:0;min-width:max-content;width:100%;white-space:nowrap;font-size:13px}
+th{position:sticky;top:0;background:#090d14;color:#ffd45a;text-transform:none;font-size:12px;line-height:1.25;letter-spacing:0;text-align:left;padding:15px 16px;border-bottom:2px solid #3a3424;z-index:2;min-width:110px}
+td{padding:15px 16px;border-bottom:1px solid #18212e;color:#e8ebef;min-width:110px}
+tbody tr:nth-child(even){background:rgba(255,255,255,.025)}
+tbody tr:hover{background:rgba(255,179,0,.06)}
+.table-note{color:var(--muted);font-size:12px;margin-top:8px;line-height:1.45}
 tbody tr:nth-child(even){background:rgba(255,255,255,.025)}
 tbody tr:hover{background:rgba(255,179,0,.06)}
 .empty{padding:28px;color:var(--muted);text-align:center}
@@ -62,7 +68,7 @@ tbody tr:hover{background:rgba(255,179,0,.06)}
 <div class="wrap">
   <div class="top">
     <div>
-      <h1>Stats Engine <b>1.0.9</b></h1>
+      <h1>Stats Engine <b>1.0.10</b></h1>
       <div class="sub">MatchStats oficial · pesquisa automática · View · TeamData + PlayerData</div>
     </div>
     <div id="status" class="status"><span class="dot"></span><span id="statusText">PRONTO</span></div>
@@ -75,7 +81,7 @@ tbody tr:hover{background:rgba(255,179,0,.06)}
       <button id="start">▶ INICIAR CAPTURA</button>
     </div>
     <div class="loading" id="loading"><span class="spinner"></span>Pesquisando no MatchStats, abrindo View e capturando as tabelas…</div>
-    <div class="notice">A pesquisa é feita diretamente no servidor. O celular não precisa abrir o MatchStats.</div>
+    <div class="notice">A pesquisa é feita diretamente no servidor. O celular não precisa abrir o MatchStats.<br><b style="color:var(--accent)">Atualização automática: a cada 1 segundo</b> enquanto a captura estiver ativa.</div>
     <div class="error" id="error"></div>
   </section>
 
@@ -95,11 +101,15 @@ tbody tr:hover{background:rgba(255,179,0,.06)}
     </div>
 
     <div id="teamPanel">
+      <div class="section-head"><strong>Dados das equipes</strong><span id="teamUpdated">Aguardando captura</span></div>
+      <div class="table-note">Os cabeçalhos mostram exatamente a que cada pontuação, quantidade ou estatística pertence.</div>
       <div class="tablebox" id="teamTable"><div class="empty">Nenhum TeamData capturado.</div></div>
       <div class="download"><button id="downloadTeam">⬇ BAIXAR TEAMDATA</button></div>
     </div>
 
     <div id="playerPanel" style="display:none">
+      <div class="section-head"><strong>Dados dos jogadores</strong><span id="playerUpdated">Aguardando captura</span></div>
+      <div class="table-note">Cada coluna é identificada pelo cabeçalho correspondente da página oficial do MatchStats.</div>
       <div class="tablebox" id="playerTable"><div class="empty">Nenhum PlayerData capturado.</div></div>
       <div class="download"><button id="downloadPlayer">⬇ BAIXAR PLAYERDATA</button></div>
     </div>
@@ -112,6 +122,8 @@ tbody tr:hover{background:rgba(255,179,0,.06)}
 
 <script>
 let result = null;
+let liveTimer = null;
+let refreshing = false;
 
 const $ = s => document.querySelector(s);
 const status = (text, ok=false) => {
@@ -123,48 +135,119 @@ const esc = v => String(v ?? "").replace(/[&<>"']/g, m => ({
 }[m]));
 
 function renderTable(target, matrix){
-  if(!matrix || matrix.length < 1){
+  if(!matrix || matrix.length < 2){
     target.innerHTML = '<div class="empty">Nenhum dado encontrado.</div>';
     return;
   }
+
   const header = matrix[0] || [];
   const body = matrix.slice(1);
-  target.innerHTML = `<table><thead><tr>${header.map(x=>`<th>${esc(x)}</th>`).join("")}</tr></thead><tbody>${
-    body.map(row=>`<tr>${header.map((_,i)=>`<td>${esc(row[i] ?? "")}</td>`).join("")}</tr>`).join("")
-  }</tbody></table>`;
+
+  target.innerHTML = `
+    <table>
+      <thead><tr>${header.map(x=>`<th>${esc(x || "—")}</th>`).join("")}</tr></thead>
+      <tbody>${
+        body.map(row=>`<tr>${header.map((_,i)=>`<td>${esc(row[i] ?? "")}</td>`).join("")}</tr>`).join("")
+      }</tbody>
+    </table>`;
 }
 
 function csv(matrix){
-  return matrix.map(row => row.map(v => `"${String(v??"").replace(/"/g,'""')}"`).join(",")).join("\\n");
+  return matrix.map(row => row.map(v => `"${String(v??"").replace(/"/g,'""')}"`).join(",")).join("\n");
 }
+
 function download(name, content){
-  const blob = new Blob(["\\ufeff"+content], {type:"text/csv;charset=utf-8"});
-  const a=document.createElement("a"); a.href=URL.createObjectURL(blob); a.download=name; a.click();
+  const blob = new Blob(["\ufeff"+content], {type:"text/csv;charset=utf-8"});
+  const a=document.createElement("a");
+  a.href=URL.createObjectURL(blob);
+  a.download=name;
+  a.click();
   setTimeout(()=>URL.revokeObjectURL(a.href),1000);
+}
+
+function paintResult(data, isRefresh=false){
+  if(!data) return;
+
+  result=data;
+  $("#kMatch").textContent=data.matchId || "—";
+  $("#kTeam").textContent=Math.max(0,(data.teamData||[]).length-1);
+  $("#kPlayer").textContent=Math.max(0,(data.playerData||[]).length-1);
+
+  if(data.elapsedMs != null && !isRefresh){
+    $("#kTime").textContent=(data.elapsedMs/1000).toFixed(1)+"s";
+  }
+
+  renderTable($("#teamTable"),data.teamData);
+  renderTable($("#playerTable"),data.playerData);
+
+  const now = new Date();
+  const stamp = now.toLocaleTimeString("pt-BR",{hour:"2-digit",minute:"2-digit",second:"2-digit"});
+  $("#teamUpdated").textContent = "Atualizado às " + stamp;
+  $("#playerUpdated").textContent = "Atualizado às " + stamp;
+}
+
+async function refreshLive(){
+  if(!result || refreshing) return;
+  refreshing=true;
+
+  try{
+    const r=await fetch("/api/refresh?matchId="+encodeURIComponent(result.matchId),{
+      cache:"no-store"
+    });
+    const j=await r.json();
+
+    if(j.ok && j.result){
+      paintResult(j.result,true);
+      status("AO VIVO",true);
+    }
+  }catch(e){
+    // Mantém os últimos dados na tela se uma atualização isolada falhar.
+  }finally{
+    refreshing=false;
+  }
+}
+
+function startLive(){
+  stopLive();
+  liveTimer=setInterval(refreshLive,1000);
+}
+
+function stopLive(){
+  if(liveTimer){
+    clearInterval(liveTimer);
+    liveTimer=null;
+  }
 }
 
 async function capture(){
   const id=$("#matchId").value.trim();
-  if(!/^\d+$/.test(id)){ $("#error").textContent="Informe um MatchID numérico válido."; $("#error").style.display="block"; return; }
 
+  if(!/^\d+$/.test(id)){
+    $("#error").textContent="Informe um MatchID numérico válido.";
+    $("#error").style.display="block";
+    return;
+  }
+
+  stopLive();
   $("#error").style.display="none";
   $("#loading").style.display="block";
   $("#start").disabled=true;
   status("PESQUISANDO");
 
   try{
-    const r=await fetch("/api/capture",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({matchId:id})});
+    const r=await fetch("/api/capture",{
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({matchId:id}),
+      cache:"no-store"
+    });
+
     const j=await r.json();
     if(!j.ok) throw new Error(j.error || "Falha na captura.");
 
-    result=j.result;
-    $("#kMatch").textContent=result.matchId;
-    $("#kTeam").textContent=Math.max(0,result.teamData.length-1);
-    $("#kPlayer").textContent=Math.max(0,result.playerData.length-1);
-    $("#kTime").textContent=(result.elapsedMs/1000).toFixed(1)+"s";
-    renderTable($("#teamTable"),result.teamData);
-    renderTable($("#playerTable"),result.playerData);
-    status("CAPTURADO",true);
+    paintResult(j.result,false);
+    status("AO VIVO",true);
+    startLive();
   }catch(e){
     status("ERRO");
     $("#error").textContent=e.message;
@@ -188,14 +271,25 @@ document.querySelectorAll(".tab").forEach(btn=>{
   });
 });
 
-$("#downloadTeam").onclick=()=>result?.teamData?.length&&download(`TeamData_${result.matchId}.csv`,csv(result.teamData));
-$("#downloadPlayer").onclick=()=>result?.playerData?.length&&download(`PlayerData_${result.matchId}.csv`,csv(result.playerData));
+$("#downloadTeam").onclick=()=>{
+  if(result?.teamData?.length)
+    download(`TeamData_${result.matchId}.csv`,csv(result.teamData));
+};
+
+$("#downloadPlayer").onclick=()=>{
+  if(result?.playerData?.length)
+    download(`PlayerData_${result.matchId}.csv`,csv(result.playerData));
+};
+
 $("#downloadAll").onclick=()=>{
   if(!result)return;
-  const a=csv(result.teamData), b=csv(result.playerData);
+  const a=csv(result.teamData||[]);
+  const b=csv(result.playerData||[]);
   download(`Match_${result.matchId}_TeamData_PlayerData.csv`,
-    "TEAM DATA\\n"+a+"\\n\\nPLAYER DATA\\n"+b);
+    "TEAM DATA\n"+a+"\n\nPLAYER DATA\n"+b);
 };
+
+window.addEventListener("beforeunload",stopLive);
 </script>
 </body>
 </html>

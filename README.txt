@@ -1,4 +1,4 @@
-Stats Engine 1.0.9
+Stats Engine 1.0.10
 
 Correções:
 - MatchID não é mais considerado inválido por ter menos de 5 dígitos.
