@@ -1,4 +1,4 @@
-# Stats Engine 1.0.3
+# Stats Engine 1.0.5
 
 Pacote raiz único para Render/GitHub.
 
