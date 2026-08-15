@@ -324,7 +324,7 @@ async function capture(matchId) {
 }
 
 app.get("/api/health", (req, res) => {
-  res.json({ ok: true, version: "1.0.6", busy, hasBrowser: !!browser });
+  res.json({ ok: true, version: "1.0.9", busy, hasBrowser: !!browser });
 });
 
 app.post("/api/capture", async (req, res) => {
@@ -362,7 +362,7 @@ app.get("/api/last", (req, res) => {
 });
 
 app.listen(PORT, "0.0.0.0", () => {
-  console.log(`Stats Engine 1.0.6 running on port ${PORT}`);
+  console.log(`Stats Engine 1.0.9 running on port ${PORT}`);
 });
 
 process.on("SIGTERM", async () => {

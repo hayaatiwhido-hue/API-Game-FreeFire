@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
-<title>Stats Engine 1.0.7</title>
+<title>Stats Engine 1.0.9</title>
 <style>
 :root{
   --bg:#070a11; --panel:#101722; --panel2:#0a0e15; --line:#273244;
@@ -62,7 +62,7 @@ tbody tr:hover{background:rgba(255,179,0,.06)}
 <div class="wrap">
   <div class="top">
     <div>
-      <h1>Stats Engine <b>1.0.6</b></h1>
+      <h1>Stats Engine <b>1.0.9</b></h1>
       <div class="sub">MatchStats oficial · pesquisa automática · View · TeamData + PlayerData</div>
     </div>
     <div id="status" class="status"><span class="dot"></span><span id="statusText">PRONTO</span></div>
@@ -145,7 +145,7 @@ function download(name, content){
 
 async function capture(){
   const id=$("#matchId").value.trim();
-  if(!/^\\d{5,}$/.test(id)){ $("#error").textContent="Informe um MatchID numérico válido."; $("#error").style.display="block"; return; }
+  if(!/^\d+$/.test(id)){ $("#error").textContent="Informe um MatchID numérico válido."; $("#error").style.display="block"; return; }
 
   $("#error").style.display="none";
   $("#loading").style.display="block";
