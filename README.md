@@ -1,14 +1,8 @@
-# Stats Engine 1.0.3
+# Stats Engine 2.1.1
 
-Pacote raiz único para Render/GitHub.
-
-Fluxo:
-1. Recebe MatchID.
-2. Abre MatchStats oficial no servidor.
-3. Pesquisa o MatchID.
-4. Localiza e aciona View com múltiplos fallbacks (texto, Operation, frames e href).
-5. Captura TeamData e PlayerData.
-6. Exibe os dados e permite baixar o JSON completo.
-
-Playwright: 1.62.1
-Docker: mcr.microsoft.com/playwright:v1.62.1-noble
+- Interface refeita em cinza/vermelho.
+- Team Data e Player Data com cabeçalho separado dos registros.
+- Parser reforçado para nunca transformar uma linha com valores numéricos em cabeçalho; Top 1 e Top 2 permanecem em linhas separadas.
+- Verificação automática no servidor em intervalo de 10 ms, com proteção contra recargas simultâneas.
+- Exportação de Team Data, Player Data e dados completos em CSV, usando os mesmos cabeçalhos exibidos na interface.
+- Playwright 1.62.1.
