@@ -1,13 +1,9 @@
 {
-  "name": "stats-engine-matchstats-v2",
-  "version": "2.0.0",
+  "name": "stats-engine-v3",
+  "version": "3.0.0",
   "private": true,
-  "description": "Stats Engine V2: captura real do MatchStats com Playwright, página persistente e polling de 1 segundo.",
+  "type": "module",
   "scripts": {
     "start": "node server.js"
-  },
-  "dependencies": {
-    "express": "^5.1.0",
-    "playwright": "1.55.0"
   }
 }

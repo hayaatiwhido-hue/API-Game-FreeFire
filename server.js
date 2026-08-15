@@ -1,389 +1,365 @@
-const express = require("express");
-const { chromium } = require("playwright");
+import express from "express";
+import axios from "axios";
+import * as cheerio from "cheerio";
+import crypto from "crypto";
 
 const app = express();
-const PORT = process.env.PORT || 3000;
-const MATCHSTATS_URL =
-  process.env.MATCHSTATS_URL || "https://matchstats.us.ffesports.com/";
-const POLL_MS = 1000;
+const PORT = process.env.PORT || 10000;
 
-app.use(express.json());
+const MATCHSTATS_BASE = "https://matchstats.us.ffesports.com";
+const SEARCH_URL = (matchId) =>
+  `${MATCHSTATS_BASE}/match?search=${encodeURIComponent(matchId)}`;
+
+app.use(express.json({ limit: "1mb" }));
 app.use(express.static("."));
-
-let browser = null;
-let context = null;
-let page = null;
-let pollTimer = null;
-let polling = false;
-let operationId = 0;
 
 const state = {
   running: false,
-  matchId: "",
-  status: "PARADO",
-  phase: "idle",
-  lastUpdate: null,
-  polls: 0,
+  matchId: null,
+  timer: null,
+  clients: new Set(),
+  consultations: 0,
   changes: 0,
-  error: null,
-  currentUrl: "",
-  title: "",
-  data: null,
-  diagnostics: {
-    inputFound: false,
-    searchTriggered: false,
-    pageReady: false
-  }
+  lastHash: null,
+  lastUpdate: null,
+  lastError: null,
+  data: null
 };
 
-function resetState(matchId) {
-  state.running = true;
-  state.matchId = matchId;
-  state.status = "INICIANDO";
-  state.phase = "starting";
-  state.lastUpdate = null;
-  state.polls = 0;
-  state.changes = 0;
-  state.error = null;
-  state.currentUrl = "";
-  state.title = "";
-  state.data = null;
-  state.diagnostics = {
-    inputFound: false,
-    searchTriggered: false,
-    pageReady: false
+function clean(value) {
+  return String(value ?? "")
+    .replace(/\u00a0/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function absoluteUrl(href) {
+  if (!href) return null;
+  try { return new URL(href, MATCHSTATS_BASE).href; }
+  catch { return null; }
+}
+
+function unique(arr) {
+  return [...new Set(arr.filter(Boolean))];
+}
+
+function parseTables($, root) {
+  const tables = [];
+  $(root).find("table").each((index, table) => {
+    const rows = [];
+    $(table).find("tr").each((_, tr) => {
+      const cells = $(tr).find("th,td").map((__, cell) => clean($(cell).text())).get();
+      if (cells.length) rows.push(cells);
+    });
+    if (rows.length) {
+      let headers = [];
+      let body = rows;
+
+      const first = rows[0];
+      const hasTh = $(table).find("tr").first().find("th").length > 0;
+      if (hasTh) {
+        headers = first;
+        body = rows.slice(1);
+      }
+
+      tables.push({
+        index,
+        headers,
+        rows: body,
+        rowCount: body.length
+      });
+    }
+  });
+  return tables;
+}
+
+function parseDefinitionLists($, root) {
+  const meta = {};
+  $(root).find("dt").each((_, dt) => {
+    const key = clean($(dt).text());
+    const value = clean($(dt).next("dd").text());
+    if (key && value) meta[key] = value;
+  });
+  return meta;
+}
+
+function extractViewCandidates($) {
+  const candidates = [];
+
+  $("a").each((_, a) => {
+    const text = clean($(a).text()).toLowerCase();
+    const href = $(a).attr("href");
+    const url = absoluteUrl(href);
+    if (!url) return;
+
+    const score =
+      (text === "view" ? 100 : 0) +
+      (text.includes("view") ? 30 : 0) +
+      (href?.toLowerCase().includes("view") ? 20 : 0) +
+      (href?.toLowerCase().includes("match") ? 10 : 0);
+
+    if (score > 0) candidates.push({ url, text, score });
+  });
+
+  // Also inspect forms/buttons that may carry the target in attributes.
+  $("form").each((_, form) => {
+    const action = absoluteUrl($(form).attr("action"));
+    if (action) candidates.push({ url: action, text: "form", score: 5 });
+  });
+
+  const seen = new Set();
+  return candidates
+    .sort((a,b) => b.score - a.score)
+    .filter(x => !seen.has(x.url) && seen.add(x.url));
+}
+
+function looksLikeMatchPage(tables, html) {
+  const text = clean(cheerio.load(html)("body").text()).toLowerCase();
+  const signals = [
+    "player", "team", "kill", "rank", "position", "points",
+    "damage", "match id", "nickname", "uid"
+  ];
+  const score = signals.filter(s => text.includes(s)).length;
+  return tables.length > 0 && score >= 2;
+}
+
+function chooseSearchResult($, requestedId) {
+  const requested = String(requestedId);
+
+  const rows = [];
+  $("table tr").each((_, tr) => {
+    const cells = $(tr).find("th,td").map((__, c) => clean($(c).text())).get();
+    if (!cells.length) return;
+
+    const links = $(tr).find("a").map((__, a) => ({
+      text: clean($(a).text()),
+      href: absoluteUrl($(a).attr("href"))
+    })).get().filter(x => x.href);
+
+    rows.push({ cells, links });
+  });
+
+  // Prefer a row whose first cell equals the requested Match ID.
+  for (const row of rows) {
+    if (row.cells.some(c => c === requested)) {
+      const view = row.links.find(l => l.text.toLowerCase() === "view")
+        || row.links.find(l => l.text.toLowerCase().includes("view"));
+      if (view) return view.href;
+    }
+  }
+
+  // Otherwise prefer any explicit View link. This matches the current
+  // MatchStats search page, where the result table exposes a View operation.
+  const views = [];
+  $("a").each((_, a) => {
+    const text = clean($(a).text()).toLowerCase();
+    const href = absoluteUrl($(a).attr("href"));
+    if (href && text.includes("view")) views.push(href);
+  });
+
+  return views[0] || null;
+}
+
+async function getHtml(url) {
+  const response = await axios.get(url, {
+    timeout: 15000,
+    maxRedirects: 5,
+    validateStatus: s => s >= 200 && s < 400,
+    headers: {
+      "User-Agent": "Mozilla/5.0 (Android 13; Mobile) AppleWebKit/537.36 Chrome/124 Safari/537.36",
+      "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+      "Accept-Language": "en-US,en;q=0.9,pt-BR;q=0.8",
+      "Cache-Control": "no-cache"
+    }
+  });
+  return { html: response.data, finalUrl: response.request?.res?.responseUrl || url };
+}
+
+async function scrapeMatch(matchId) {
+  if (!matchId) throw new Error("Informe um Match ID.");
+
+  const search = await getHtml(SEARCH_URL(matchId));
+  const $search = cheerio.load(search.html);
+
+  const searchTables = parseTables($search, "body");
+  const viewUrl = chooseSearchResult($search, matchId);
+
+  if (!viewUrl) {
+    return {
+      found: false,
+      matchId: String(matchId),
+      source: SEARCH_URL(matchId),
+      stage: "search",
+      message: "A pesquisa abriu, mas nenhum resultado com link 'View' foi encontrado."
+    };
+  }
+
+  const detail = await getHtml(viewUrl);
+  const $detail = cheerio.load(detail.html);
+
+  const tables = parseTables($detail, "body");
+  const meta = parseDefinitionLists($detail, "body");
+
+  const title = clean($detail("title").first().text()) || "MatchStats";
+  const headings = unique(
+    $detail("h1,h2,h3,h4").map((_, el) => clean($detail(el).text())).get()
+  );
+
+  if (!tables.length && !looksLikeMatchPage(tables, detail.html)) {
+    return {
+      found: true,
+      matchId: String(matchId),
+      source: viewUrl,
+      stage: "detail",
+      title,
+      headings,
+      meta,
+      tables: [],
+      message: "A página da partida foi aberta, mas nenhum quadro HTML foi encontrado."
+    };
+  }
+
+  return {
+    found: true,
+    matchId: String(matchId),
+    source: viewUrl,
+    stage: "detail",
+    capturedAt: new Date().toISOString(),
+    title,
+    headings,
+    meta,
+    tables
   };
 }
 
-function setError(message, phase = state.phase) {
-  state.status = "ERRO";
-  state.phase = phase;
-  state.error = String(message || "Erro desconhecido");
+function hashData(data) {
+  return crypto.createHash("sha256")
+    .update(JSON.stringify(data))
+    .digest("hex");
 }
 
-function comparable(snapshot) {
-  if (!snapshot) return "";
-  return JSON.stringify({
-    tables: snapshot.tables,
-    text: snapshot.bodyText
-  });
+function publicState() {
+  return {
+    running: state.running,
+    matchId: state.matchId,
+    consultations: state.consultations,
+    changes: state.changes,
+    lastUpdate: state.lastUpdate,
+    lastError: state.lastError,
+    data: state.data
+  };
 }
 
-async function ensureBrowser() {
-  if (browser && context && page && !page.isClosed()) return;
-
-  state.phase = "browser";
-
-  browser = await chromium.launch({
-    headless: true,
-    args: [
-      "--no-sandbox",
-      "--disable-setuid-sandbox",
-      "--disable-dev-shm-usage",
-      "--disable-gpu"
-    ]
-  });
-
-  context = await browser.newContext({
-    viewport: { width: 1440, height: 1000 },
-    locale: "en-US",
-    userAgent:
-      "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131 Safari/537.36"
-  });
-
-  page = await context.newPage();
-
-  page.setDefaultTimeout(8000);
-  page.setDefaultNavigationTimeout(30000);
-
-  page.on("console", msg => {
-    if (process.env.DEBUG_BROWSER === "1") {
-      console.log("[browser]", msg.type(), msg.text());
-    }
-  });
+function broadcast() {
+  const payload = `data: ${JSON.stringify(publicState())}\n\n`;
+  for (const res of state.clients) res.write(payload);
 }
 
-async function openMatchStats() {
-  state.phase = "opening";
-  await page.goto(MATCHSTATS_URL, {
-    waitUntil: "domcontentloaded",
-    timeout: 30000
-  });
-
-  // A aplicação é JavaScript; damos tempo para montar a interface.
-  await page.waitForLoadState("networkidle", { timeout: 12000 }).catch(() => {});
-  await page.waitForTimeout(1200);
-
-  state.currentUrl = page.url();
-  state.title = await page.title();
-  state.diagnostics.pageReady = true;
-}
-
-async function clickMatchTabIfPresent() {
-  const candidates = [
-    page.getByRole("button", { name: /^Match$/i }).first(),
-    page.getByText("Match", { exact: true }).first(),
-    page.locator("button").filter({ hasText: /^Match$/i }).first()
-  ];
-
-  for (const locator of candidates) {
-    try {
-      if (await locator.count() && await locator.isVisible()) {
-        await locator.click();
-        await page.waitForTimeout(300);
-        return true;
-      }
-    } catch {}
-  }
-
-  return false;
-}
-
-async function findMatchInput() {
-  const selectors = [
-    'input[placeholder="Match ID/ Name"]',
-    'input[placeholder*="Match ID" i]',
-    'input[placeholder*="Match" i]',
-    'input[type="search"]'
-  ];
-
-  for (const selector of selectors) {
-    const loc = page.locator(selector).first();
-    try {
-      if (await loc.count() && await loc.isVisible()) return loc;
-    } catch {}
-  }
-
-  // Último recurso: somente inputs visíveis, ignorando campos de login/outros.
-  const inputs = page.locator("input:visible");
-  const count = await inputs.count();
-
-  for (let i = 0; i < count; i++) {
-    const loc = inputs.nth(i);
-    const placeholder = await loc.getAttribute("placeholder").catch(() => "");
-    const type = await loc.getAttribute("type").catch(() => "text");
-    const text = `${placeholder || ""} ${type || ""}`.toLowerCase();
-
-    if (text.includes("match") || type === "search") return loc;
-  }
-
-  return null;
-}
-
-async function triggerSearch(input) {
-  state.phase = "searching";
-  state.diagnostics.inputFound = true;
-
-  await input.fill(state.matchId);
-
-  // Primeiro usa o comportamento natural do campo.
-  await input.press("Enter").catch(() => {});
-
-  // Se houver botão explícito de busca, tentamos somente se ele estiver visível.
-  const buttonNames = [/^search$/i, /^go$/i, /^submit$/i];
-  for (const re of buttonNames) {
-    const button = page.getByRole("button", { name: re }).first();
-    try {
-      if (await button.count() && await button.isVisible()) {
-        await button.click();
-        break;
-      }
-    } catch {}
-  }
-
-  state.diagnostics.searchTriggered = true;
-
-  await page.waitForTimeout(1500);
-}
-
-async function captureSnapshot() {
-  const snapshot = await page.evaluate(() => {
-    const tables = [...document.querySelectorAll("table")].map((table, index) => ({
-      index,
-      rows: [...table.querySelectorAll("tr")]
-        .map(tr =>
-          [...tr.querySelectorAll("th,td")].map(td => td.innerText.trim())
-        )
-        .filter(row => row.length)
-    }));
-
-    const visibleInputs = [...document.querySelectorAll("input")]
-      .filter(el => {
-        const s = getComputedStyle(el);
-        return s.display !== "none" && s.visibility !== "hidden";
-      })
-      .map(el => ({
-        placeholder: el.getAttribute("placeholder"),
-        value: el.value,
-        type: el.getAttribute("type")
-      }));
-
-    const buttons = [...document.querySelectorAll("button")]
-      .filter(el => {
-        const s = getComputedStyle(el);
-        return s.display !== "none" && s.visibility !== "hidden";
-      })
-      .map(el => (el.innerText || "").trim())
-      .filter(Boolean);
-
-    return {
-      capturedAt: new Date().toISOString(),
-      title: document.title,
-      url: location.href,
-      tables,
-      visibleInputs,
-      buttons,
-      bodyText: document.body.innerText
-    };
-  });
-
-  state.currentUrl = snapshot.url;
-  state.title = snapshot.title;
-
-  return snapshot;
-}
-
-async function startMonitor(matchId, myOperation) {
-  try {
-    await ensureBrowser();
-    if (myOperation !== operationId) return;
-
-    await openMatchStats();
-    if (myOperation !== operationId) return;
-
-    await clickMatchTabIfPresent();
-
-    const input = await findMatchInput();
-    if (!input) {
-      const snap = await captureSnapshot();
-      throw new Error(
-        `Campo de MatchID não encontrado. A página carregou, mas a interface de pesquisa não foi localizada. URL atual: ${snap.url}`
-      );
-    }
-
-    await triggerSearch(input);
-    if (myOperation !== operationId) return;
-
-    const first = await captureSnapshot();
-
-    state.data = first;
-    state.lastUpdate = first.capturedAt;
-    state.status = "CONECTADO";
-    state.phase = "monitoring";
-    state.error = null;
-
-    // Página fica aberta. Não fazemos reload.
-    if (pollTimer) clearInterval(pollTimer);
-    pollTimer = setInterval(() => pollOnce(myOperation), POLL_MS);
-  } catch (error) {
-    setError(error.message, state.phase);
-  }
-}
-
-async function pollOnce(myOperation) {
-  if (!state.running || polling || myOperation !== operationId || !page) return;
-
-  polling = true;
+async function tick() {
+  if (!state.running || !state.matchId) return;
 
   try {
-    const current = await captureSnapshot();
+    const data = await scrapeMatch(state.matchId);
+    state.consultations++;
+    state.lastError = null;
+    state.lastUpdate = new Date().toISOString();
 
-    if (state.data && comparable(state.data) !== comparable(current)) {
+    const nextHash = hashData(data);
+    if (nextHash !== state.lastHash) {
       state.changes++;
+      state.lastHash = nextHash;
+      state.data = data;
+    } else if (state.data) {
+      // Keep the original data but update the capture timestamp.
+      state.data = { ...state.data, capturedAt: state.lastUpdate };
+    } else {
+      state.data = data;
     }
-
-    state.data = current;
-    state.polls++;
-    state.lastUpdate = current.capturedAt;
-    state.currentUrl = current.url;
-    state.title = current.title;
-    state.status = "CONECTADO";
-    state.phase = "monitoring";
-    state.error = null;
   } catch (error) {
-    state.status = "ERRO";
-    state.error = String(error.message || error);
-  } finally {
-    polling = false;
+    state.consultations++;
+    state.lastError = error?.message || String(error);
+    state.lastUpdate = new Date().toISOString();
   }
+
+  broadcast();
 }
 
-app.post("/api/start", (req, res) => {
-  const matchId = String(req.body?.matchId || "").trim();
-
-  if (!matchId) {
-    return res.status(400).json({ error: "Informe um MatchID." });
-  }
-
-  operationId++;
-  const myOperation = operationId;
-
-  if (pollTimer) clearInterval(pollTimer);
-  pollTimer = null;
-
-  resetState(matchId);
-
-  // Não bloqueia a resposta HTTP enquanto o Chromium abre e pesquisa.
-  startMonitor(matchId, myOperation);
-
-  res.json({
-    ok: true,
-    message: "Monitoramento iniciado.",
-    state
-  });
-});
-
-app.post("/api/stop", async (_req, res) => {
-  operationId++;
-
-  if (pollTimer) clearInterval(pollTimer);
-  pollTimer = null;
-
+function stopMonitor() {
   state.running = false;
-  state.status = "PARADO";
-  state.phase = "idle";
+  if (state.timer) clearInterval(state.timer);
+  state.timer = null;
+  broadcast();
+}
 
-  res.json({ ok: true, state });
-});
+function startMonitor(matchId) {
+  stopMonitor();
+  state.running = true;
+  state.matchId = String(matchId);
+  state.consultations = 0;
+  state.changes = 0;
+  state.lastHash = null;
+  state.lastUpdate = null;
+  state.lastError = null;
+  state.data = null;
 
-app.get("/api/state", (_req, res) => {
-  res.set("Cache-Control", "no-store");
-  res.json(state);
-});
+  tick();
+  state.timer = setInterval(tick, 1000);
+}
 
-app.get("/api/diagnostics", (_req, res) => {
-  res.set("Cache-Control", "no-store");
-  res.json({
-    ...state.diagnostics,
-    phase: state.phase,
-    status: state.status,
-    currentUrl: state.currentUrl,
-    title: state.title,
-    error: state.error
-  });
-});
-
-app.get("/health", (_req, res) => {
+app.get("/api/health", (_, res) => {
   res.json({
     ok: true,
-    service: "stats-engine-v2",
-    intervalMs: POLL_MS
+    engine: "Stats Engine V3",
+    matchstats: MATCHSTATS_BASE,
+    intervalMs: 1000
   });
 });
+
+app.get("/api/state", (_, res) => res.json(publicState()));
+
+app.post("/api/monitor/start", (req, res) => {
+  const matchId = String(req.body?.matchId ?? "").trim();
+  if (!matchId) return res.status(400).json({ error: "Match ID obrigatório." });
+  startMonitor(matchId);
+  res.json({ ok: true, state: publicState() });
+});
+
+app.post("/api/monitor/stop", (_, res) => {
+  stopMonitor();
+  res.json({ ok: true, state: publicState() });
+});
+
+app.get("/api/events", (req, res) => {
+  res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
+  res.setHeader("Cache-Control", "no-cache, no-transform");
+  res.setHeader("Connection", "keep-alive");
+  res.flushHeaders?.();
+
+  state.clients.add(res);
+  res.write(`data: ${JSON.stringify(publicState())}\n\n`);
+
+  const heartbeat = setInterval(() => res.write(": heartbeat\n\n"), 15000);
+
+  req.on("close", () => {
+    clearInterval(heartbeat);
+    state.clients.delete(res);
+  });
+});
+
+app.get("/api/match/:id", async (req, res) => {
+  try {
+    const data = await scrapeMatch(req.params.id);
+    res.json(data);
+  } catch (error) {
+    res.status(502).json({
+      found: false,
+      error: error?.message || String(error)
+    });
+  }
+});
+
+app.get("*", (_, res) => res.sendFile("index.html", { root: "." }));
 
 app.listen(PORT, "0.0.0.0", () => {
-  console.log(`Stats Engine V2 ativo na porta ${PORT}`);
-  console.log(`MatchStats: ${MATCHSTATS_URL}`);
-});
-
-process.on("SIGTERM", async () => {
-  if (pollTimer) clearInterval(pollTimer);
-  if (browser) await browser.close();
-  process.exit(0);
-});
-
-process.on("SIGINT", async () => {
-  if (pollTimer) clearInterval(pollTimer);
-  if (browser) await browser.close();
-  process.exit(0);
+  console.log(`Stats Engine V3 listening on 0.0.0.0:${PORT}`);
 });

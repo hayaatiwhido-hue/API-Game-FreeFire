@@ -2,146 +2,120 @@
 <html lang="pt-BR">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Stats Engine V2 — MatchStats</title>
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Stats Engine V3</title>
 <style>
-*{box-sizing:border-box}
-body{margin:0;background:#080b12;color:#f5f7fb;font:14px system-ui,Arial,sans-serif}
-main{max-width:1100px;margin:auto;padding:20px}
-.top{display:flex;justify-content:space-between;gap:15px;align-items:center}
-h1{margin:0;font-size:25px}.muted{margin-top:5px;color:#8e99aa;font-size:12px}
-.status{border:1px solid #263043;border-radius:999px;padding:8px 12px;font-size:12px}
-.dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:#667085;margin-right:7px}
-.dot.on{background:#32d583;box-shadow:0 0 12px #32d583}
-.dot.err{background:#ff5b67}
-.card{margin-top:15px;background:#10151f;border:1px solid #202a39;border-radius:15px;padding:16px}
-label{display:block;color:#98a3b4;font-size:11px;font-weight:800;margin-bottom:7px}
-.row{display:grid;grid-template-columns:1fr auto;gap:9px}
-input{height:45px;width:100%;background:#0a0e15;color:#fff;border:1px solid #2a3445;border-radius:9px;padding:0 12px;font-size:15px;outline:none}
-button{height:45px;border:0;border-radius:9px;padding:0 16px;font-weight:800;cursor:pointer}
-.go{background:#fff;color:#080b12}.stop{background:#252d3a;color:#fff}
-.metrics{display:grid;grid-template-columns:repeat(4,1fr);gap:9px}
-.metric{background:#0a0e15;border:1px solid #202a39;border-radius:10px;padding:13px}
-.metric b{display:block;color:#8e99aa;font-size:10px}.metric strong{display:block;font-size:18px;margin-top:4px}
-pre{white-space:pre-wrap;word-break:break-word;background:#070a0f;border-radius:10px;padding:12px;max-height:650px;overflow:auto;color:#b8c2d0;font:12px ui-monospace,monospace}
-.small{color:#8e99aa;font-size:11px;margin-top:8px}
-@media(max-width:700px){.top{align-items:flex-start;flex-direction:column}.row{grid-template-columns:1fr}.metrics{grid-template-columns:repeat(2,1fr)}main{padding:14px}}
+:root{color-scheme:dark;font-family:Inter,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#070a10;color:#f4f6fb}
+*{box-sizing:border-box}body{margin:0;background:#070a10}main{width:min(1100px,100%);margin:auto;padding:20px}
+h1{margin:0;font-size:28px}.sub{color:#8993a5;margin:5px 0 20px}
+.card{background:#101520;border:1px solid #202a3a;border-radius:18px;padding:18px;margin:14px 0}
+label{display:block;color:#8f9bad;font-size:12px;font-weight:700;text-transform:uppercase;margin-bottom:8px}
+input{width:100%;background:#080c13;border:1px solid #293449;border-radius:12px;padding:15px;color:white;font-size:17px;outline:none}
+.actions{display:flex;gap:10px;margin-top:12px}button{border:0;border-radius:11px;padding:13px 18px;font-weight:800;font-size:15px;cursor:pointer}#start{background:#fff;color:#090c12}#stop{background:#273143;color:#fff}
+.status{display:inline-flex;align-items:center;gap:8px;border:1px solid #293449;border-radius:999px;padding:8px 12px;color:#b7c0cf;font-size:13px}.dot{width:8px;height:8px;border-radius:50%;background:#66748b}.on .dot{background:#55d88a}
+.grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}.metric{background:#080c13;border:1px solid #202b3b;border-radius:13px;padding:14px}.metric span{display:block;color:#8b95a7;font-size:11px;text-transform:uppercase}.metric b{display:block;font-size:24px;margin-top:5px}
+#result{overflow:auto}.source{color:#8993a5;font-size:12px;word-break:break-all}.error{background:#2b1518;border:1px solid #5b282e;color:#ffb5bc;padding:12px;border-radius:10px}
+h2{font-size:16px;margin:0 0 12px}table{width:100%;border-collapse:collapse;min-width:600px}th,td{padding:10px 9px;border-bottom:1px solid #202a3a;text-align:left;font-size:13px}th{color:#aeb8c8;font-weight:700;background:#0b1018;position:sticky;top:0}
+.tablewrap{overflow:auto;border:1px solid #202a3a;border-radius:12px;margin:12px 0}
+.empty{color:#8993a5;background:#080c13;padding:14px;border-radius:10px}
+.badge{display:inline-block;padding:5px 8px;border-radius:999px;background:#172233;color:#c8d3e5;font-size:11px;margin:3px}
+@media(max-width:700px){main{padding:14px}.grid{grid-template-columns:repeat(2,1fr)}h1{font-size:25px}.card{padding:14px}.actions button{flex:1}}
 </style>
 </head>
 <body>
 <main>
-  <div class="top">
-    <div>
-      <h1>Stats Engine V2</h1>
-      <div class="muted">MatchStats oficial · página persistente · verificação de 1 em 1 segundo</div>
+  <h1>Stats Engine V3</h1>
+  <div class="sub">MatchStats oficial · partida específica · atualização automática de 1 em 1 segundo</div>
+
+  <div id="status" class="status"><i class="dot"></i><span>PARADO</span></div>
+
+  <section class="card">
+    <label for="matchId">Match ID</label>
+    <input id="matchId" inputmode="numeric" value="1" placeholder="Ex.: 1">
+    <div class="actions">
+      <button id="start">▶ INICIAR</button>
+      <button id="stop">■ PARAR</button>
     </div>
-    <div class="status"><span id="dot" class="dot"></span><span id="status">PARADO</span></div>
-  </div>
+  </section>
 
-  <div class="card">
-    <label>MATCH ID</label>
-    <div class="row">
-      <input id="matchId" placeholder="Digite um MatchID real" value="1">
-      <div>
-        <button class="go" id="start">▶ INICIAR</button>
-        <button class="stop" id="stop">■ PARAR</button>
-      </div>
+  <section class="card">
+    <div class="grid">
+      <div class="metric"><span>Consultas</span><b id="consultas">0</b></div>
+      <div class="metric"><span>Alterações</span><b id="alteracoes">0</b></div>
+      <div class="metric"><span>Última atualização</span><b id="ultima">—</b></div>
+      <div class="metric"><span>Intervalo</span><b>1s</b></div>
     </div>
-    <div class="small">A página do MatchStats permanece aberta. O Engine não faz reload a cada segundo.</div>
-  </div>
+  </section>
 
-  <div class="card">
-    <div class="metrics">
-      <div class="metric"><b>CONSULTAS</b><strong id="polls">0</strong></div>
-      <div class="metric"><b>ALTERAÇÕES</b><strong id="changes">0</strong></div>
-      <div class="metric"><b>FASE</b><strong id="phase">idle</strong></div>
-      <div class="metric"><b>INTERVALO</b><strong>1s</strong></div>
-    </div>
-  </div>
-
-  <div class="card">
-    <label>DIAGNÓSTICO</label>
-    <pre id="diag">Aguardando início.</pre>
-  </div>
-
-  <div class="card">
-    <label>DADOS REAIS CAPTURADOS</label>
-    <pre id="output">Nenhuma partida monitorada.</pre>
-  </div>
+  <section class="card">
+    <h2>Partida encontrada</h2>
+    <div id="result"><div class="empty">Nenhuma partida monitorada.</div></div>
+  </section>
 </main>
 
 <script>
-const $ = id => document.getElementById(id);
+const $=s=>document.querySelector(s);
+const statusEl=$("#status"), resultEl=$("#result");
+let es;
 
-function render(s) {
-  $("status").textContent = s.status || "PARADO";
-  $("phase").textContent = s.phase || "idle";
+function setStatus(on,text){statusEl.classList.toggle("on",on);statusEl.querySelector("span").textContent=text}
 
-  const connected = s.running && s.status === "CONECTADO";
-  $("dot").classList.toggle("on", !!connected);
-  $("dot").classList.toggle("err", s.status === "ERRO");
+function esc(v){return String(v??"").replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"}[m]))}
 
-  $("polls").textContent = s.polls ?? 0;
-  $("changes").textContent = s.changes ?? 0;
-
-  $("diag").textContent = JSON.stringify({
-    status: s.status,
-    phase: s.phase,
-    matchId: s.matchId,
-    currentUrl: s.currentUrl,
-    title: s.title,
-    diagnostics: s.diagnostics,
-    lastUpdate: s.lastUpdate,
-    error: s.error
-  }, null, 2);
-
-  if (s.error) {
-    $("output").textContent = "ERRO:\n" + s.error +
-      "\n\nDIAGNÓSTICO:\n" + JSON.stringify(s.diagnostics, null, 2);
-  } else if (s.data) {
-    $("output").textContent = JSON.stringify(s.data, null, 2);
-  }
+function renderTable(t){
+  const head=t.headers?.length?t.headers.map(x=>`<th>${esc(x)}</th>`).join(""):"";
+  const rows=(t.rows||[]).map(r=>`<tr>${r.map(c=>`<td>${esc(c)}</td>`).join("")}</tr>`).join("");
+  return `<div class="tablewrap"><table>${head?`<thead><tr>${head}</tr></thead>`:""}<tbody>${rows}</tbody></table></div>`;
 }
 
-async function refresh() {
-  try {
-    const r = await fetch("/api/state", {cache:"no-store"});
-    if (r.ok) render(await r.json());
-  } catch {}
+function render(data){
+  if(!data){resultEl.innerHTML='<div class="empty">Nenhuma partida monitorada.</div>';return}
+  if(data.error){resultEl.innerHTML=`<div class="error">${esc(data.error)}</div>`;return}
+  if(data.found===false){resultEl.innerHTML=`<div class="error">${esc(data.message||"Partida não encontrada.")}</div>`;return}
+
+  const meta=Object.entries(data.meta||{}).map(([k,v])=>`<span class="badge">${esc(k)}: ${esc(v)}</span>`).join("");
+  const tables=(data.tables||[]).map((t,i)=>`<h2>Dados ${i+1}</h2>${renderTable(t)}`).join("");
+
+  resultEl.innerHTML=`
+    <div><strong>${esc(data.title||"MatchStats")}</strong></div>
+    <div style="margin:8px 0">${meta||""}</div>
+    <div class="source">Fonte: ${esc(data.source||"")}</div>
+    ${data.headings?.length?`<div style="margin:8px 0">${data.headings.map(h=>`<span class="badge">${esc(h)}</span>`).join("")}</div>`:""}
+    ${tables||'<div class="empty">A página específica foi encontrada, mas ainda não há tabelas HTML para exibir.</div>'}
+  `;
 }
 
-$("start").onclick = async () => {
-  const matchId = $("matchId").value.trim();
-  if (!matchId) return alert("Digite um MatchID real.");
+function apply(s){
+  $("#consultas").textContent=s.consultations??0;
+  $("#alteracoes").textContent=s.changes??0;
+  $("#ultima").textContent=s.lastUpdate?new Date(s.lastUpdate).toLocaleTimeString():"—";
+  setStatus(!!s.running,s.running?"MONITORANDO":"PARADO");
+  if(s.lastError) resultEl.innerHTML=`<div class="error">${esc(s.lastError)}</div>`;
+  else if(s.data) render(s.data);
+}
 
-  $("status").textContent = "INICIANDO";
+function connectEvents(){
+  if(es) es.close();
+  es=new EventSource("/api/events");
+  es.onmessage=e=>{try{apply(JSON.parse(e.data))}catch{}};
+  es.onerror=()=>setStatus(false,"RECONEXÃO...");
+}
 
-  try {
-    const r = await fetch("/api/start", {
-      method:"POST",
-      headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({matchId})
-    });
-
-    const result = await r.json();
-
-    if (!r.ok || result.error) {
-      throw new Error(result.error || "Não foi possível iniciar.");
-    }
-
-    render(result.state);
-  } catch (e) {
-    alert(e.message);
-  }
+$("#start").onclick=async()=>{
+  const matchId=$("#matchId").value.trim();
+  if(!matchId)return;
+  const r=await fetch("/api/monitor/start",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({matchId})});
+  apply((await r.json()).state);
+  connectEvents();
 };
 
-$("stop").onclick = async () => {
-  await fetch("/api/stop", {method:"POST"});
-  refresh();
+$("#stop").onclick=async()=>{
+  const r=await fetch("/api/monitor/stop",{method:"POST"});
+  apply((await r.json()).state);
 };
 
-setInterval(refresh, 500);
-refresh();
+connectEvents();
+fetch("/api/state").then(r=>r.json()).then(apply);
 </script>
 </body>
 </html>

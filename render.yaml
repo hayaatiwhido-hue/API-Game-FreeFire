@@ -1,9 +1,7 @@
 services:
   - type: web
-    name: stats-engine-matchstats
-    runtime: docker
-    plan: free
-    dockerfilePath: ./Dockerfile
-    envVars:
-      - key: MATCHSTATS_URL
-        value: https://matchstats.us.ffesports.com/
+    name: stats-engine-v3
+    runtime: node
+    buildCommand: npm install
+    startCommand: npm start
+    autoDeploy: true
