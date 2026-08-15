@@ -273,11 +273,16 @@ async function extractSection(page, section) {
       const norm = v => clean(v).normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, "");
       const isNumber = v => /^-?\d+(?:[.,]\d+)?$/.test(clean(v));
 
+      // ORDEM EXATA usada pelo MatchStats nas telas de referência.
+      // Não existe uma coluna artificial "Position"/"Team Position" entre Rank e Team ID.
       const teamCanonical = [
-        "Rank", "Position", "Team ID", "Team Name", "Total Score", "Survival Score", "Kill", "Headshot", "Damage", "Booyah"
+        "Match Rank", "Team ID", "Team Name", "Survival Score", "Kill", "Total Score", "BOOYAH!",
+        "Damage", "On Target", "Headshots", "Headshot Kill Rate", "Headshot Accuracy Rate", "Survival Time", "Revival"
       ];
       const playerCanonical = [
-        "Rank", "Team Position", "Team Name", "UID", "Player Name", "Total Score", "Survival Score", "Kill", "Headshot", "Damage", "Revival", "Rescue"
+        "Match Rank", "Team Name", "Player ID", "Player Name", "Kill", "Damage", "Assist", "On Target",
+        "Moving Distance", "Headshots", "Headshot Kill Rate", "Headshot Accuracy Rate", "Revival", "Revival Members",
+        "Knock Down", "Rescue Members", "Survival Time", "Maximum kill distance", "Operation"
       ];
 
       function expandRow(tr) {
@@ -367,6 +372,51 @@ async function extractSection(page, section) {
 
         body = body.filter(row => row.some(v => clean(v) !== ""));
         if (!header.length || !body.length) continue;
+
+        // Alinha os DADOS ao mesmo campo do cabeçalho. O MatchStats pode
+        // entregar a tabela com a ordem visual correta, mas em algumas
+        // atualizações o DOM inclui/omite uma coluna auxiliar. Se usarmos
+        // apenas row[index], Team Name pode acabar embaixo de Team ID.
+        // Quando existe um cabeçalho real, fazemos o mapeamento pelo nome
+        // da coluna e depois reconstruímos cada linha na ordem canônica.
+        const canonical = wantedSection === "Team Data" ? teamCanonical : playerCanonical;
+        const alias = {
+          matchrank:"Match Rank", rank:"Match Rank", position:"Match Rank", posicao:"Match Rank",
+          teamid:"Team ID", teamname:"Team Name", team:"Team Name",
+          survivalscore:"Survival Score", survival:"Survival Score",
+          kill:"Kill", kills:"Kill", abates:"Kill",
+          totalscore:"Total Score", score:"Total Score", pontos:"Total Score",
+          booyah:"BOOYAH!", booyahscore:"BOOYAH!",
+          damage:"Damage", dano:"Damage", ontarget:"On Target",
+          headshot:"Headshots", headshots:"Headshots",
+          headshotkillrate:"Headshot Kill Rate",
+          headshotaccuracyrate:"Headshot Accuracy Rate", accuracy:"Headshot Accuracy Rate",
+          survivaltime:"Survival Time", revival:"Revival", revives:"Revival",
+          playerid:"Player ID", uid:"Player ID", playername:"Player Name", nickname:"Player Name", player:"Player Name", jogador:"Player Name",
+          assist:"Assist", assists:"Assist", movingdistance:"Moving Distance",
+          revivalmembers:"Revival Members", knockdown:"Knock Down", knockdowns:"Knock Down",
+          rescue:"Rescue Members", rescues:"Rescue Members", rescuemembers:"Rescue Members",
+          maximumkilldistance:"Maximum kill distance", operation:"Operation"
+        };
+        const sourceToCanonical = header.map(h => alias[norm(h)] || clean(h));
+        const canonicalIndex = new Map(canonical.map((h,i)=>[norm(h),i]));
+        const hasUsefulHeaderMapping = header.some(h => canonicalIndex.has(norm(alias[norm(h)] || h)));
+        if (hasUsefulHeaderMapping) {
+          body = body.map(row => {
+            const out = Array(canonical.length).fill("");
+            sourceToCanonical.forEach((name, srcIdx) => {
+              const dst = canonicalIndex.get(norm(name));
+              if (dst !== undefined && out[dst] === "") out[dst] = row[srcIdx] ?? "";
+            });
+            return out;
+          });
+          header = canonical.slice();
+        } else {
+          // Sem cabeçalho real, a própria tabela é considerada já na ordem
+          // oficial e somente é limitada ao número correto de colunas.
+          body = body.map(row => canonical.map((_,i) => row[i] ?? ""));
+          header = canonical.slice();
+        }
 
         // Remove linhas de controle/paginação que não representam registro.
         body = body.filter(row => {
