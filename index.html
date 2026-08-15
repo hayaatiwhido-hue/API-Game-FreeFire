@@ -34,7 +34,6 @@ button,input{font:inherit}button{cursor:pointer}button:disabled{cursor:not-allow
 .tabs{display:flex;gap:4px;padding:4px;background:#0b0b0b;border:1px solid var(--line);border-radius:11px;width:max-content}.tab{height:34px;padding:0 16px;border:0;border-radius:8px;background:transparent;color:#707070;font-size:10px;font-weight:850}.tab.active{background:#222;color:#eee;box-shadow:inset 0 0 0 1px #444}
 .panel{padding:16px}.panel-top{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:10px}.panel-title{font-size:12px;font-weight:850;text-transform:uppercase;letter-spacing:.06em}.panel-desc{font-size:9px;color:#666;margin-top:3px}.panel-actions{display:flex;gap:7px;flex-wrap:wrap}.download{height:34px;padding:0 12px;border:1px solid #343434;border-radius:8px;background:#1d1d1d;color:#ddd;font-size:9px;font-weight:850}.download:hover{background:#282828}
 
-/* Cabeçalhos de Informações Agregadas Acima da Tabela */
 .summary-metrics-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
@@ -48,11 +47,6 @@ button,input{font:inherit}button{cursor:pointer}button:disabled{cursor:not-allow
   border-radius: 9px;
   padding: 10px 12px;
   box-shadow: inset 0 1px 0 rgba(255,255,255,0.03);
-  transition: transform .2s ease, border-color .2s ease;
-}
-.summary-metric-box:hover {
-  border-color: #444;
-  transform: translateY(-1px);
 }
 .summary-metric-box .sm-label {
   display: block;
@@ -82,7 +76,6 @@ tbody tr:hover td{background:#191919}
 tbody tr:last-child td{border-bottom:0}
 tbody td:first-child{text-align:center;min-width:56px;color:#f0f0f0;font-weight:850}
 
-/* Animações Complexas de Arrastar/Deslizar (Smooth Drag Matrix Effect) nas Cores Cinza e Vermelha */
 tr {
   transition: transform 0.6s cubic-bezier(0.25, 1, 0.5, 1), background-color 0.4s ease;
   will-change: transform;
@@ -202,9 +195,8 @@ tr {
 
     <!-- PAINEL TEAM DATA -->
     <div id="teamPanel" class="panel">
-      <div class="panel-top"><div><div class="panel-title">Ranking das equipes</div><div class="panel-desc">Cabeçalhos oficiais do MatchStats organizados acima da tabela.</div></div><div class="panel-actions"><button class="download" id="downloadTeam">BAIXAR CSV · EQUIPES</button></div></div>
+      <div class="panel-top"><div><div class="panel-title">Ranking das equipes</div><div class="panel-desc">Cabeçalhos em português idênticos ao layout desejado.</div></div><div class="panel-actions"><button class="download" id="downloadTeam">BAIXAR CSV · EQUIPES</button></div></div>
       
-      <!-- Cabeçalho de Informações / Totais Puxados Acima da Tabela Geral (TeamData) -->
       <div id="teamSummaryHeader" class="summary-metrics-grid">
         <div class="summary-metric-box"><span class="sm-label">Total Equipes</span><span class="sm-value" id="tsTeamCount">0</span></div>
         <div class="summary-metric-box"><span class="sm-label">Pontuação Máxima</span><span class="sm-value" id="tsMaxScore">0</span></div>
@@ -213,14 +205,13 @@ tr {
       </div>
 
       <div class="table-shell" id="teamTable"><div class="empty">Inicie uma captura para visualizar o ranking das equipes.</div></div>
-      <div class="table-foot"><span><b>Colunas:</b> Rank · Team Name · Total Score · Survival Score · Kill · BOOYAH! · Damage · On Target</span><span class="live-pill" id="teamLive">● aguardando</span></div>
+      <div class="table-foot"><span><b>Colunas:</b> POSIÇÃO · EQUIPES · ABATES · PONTOS · BOOYAH</span><span class="live-pill" id="teamLive">● aguardando</span></div>
     </div>
 
     <!-- PAINEL PLAYER DATA -->
     <div id="playerPanel" class="panel" style="display:none">
-      <div class="panel-top"><div><div class="panel-title">Ranking dos jogadores</div><div class="panel-desc">Cabeçalhos oficiais do MatchStats com somatório de abates, danos e informações dos players.</div></div><div class="panel-actions"><button class="download" id="downloadPlayer">BAIXAR CSV · JOGADORES</button></div></div>
+      <div class="panel-top"><div><div class="panel-title">Ranking dos jogadores</div><div class="panel-desc">Cabeçalhos em português com UID, abates e danos.</div></div><div class="panel-actions"><button class="download" id="downloadPlayer">BAIXAR CSV · JOGADORES</button></div></div>
       
-      <!-- Cabeçalho de Informações / Totais Puxados Acima da Tabela Geral (PlayerData) -->
       <div id="playerSummaryHeader" class="summary-metrics-grid">
         <div class="summary-metric-box"><span class="sm-label">Total de Jogadores</span><span class="sm-value" id="psPlayerCount">0</span></div>
         <div class="summary-metric-box"><span class="sm-label">Top Fragger (Maior Kills)</span><span class="sm-value" id="psTopFragger">—</span></div>
@@ -229,7 +220,7 @@ tr {
       </div>
 
       <div class="table-shell" id="playerTable"><div class="empty">Inicie uma captura para visualizar o ranking dos jogadores.</div></div>
-      <div class="table-foot"><span><b>Colunas:</b> Rank · Team Name · Player Name · UID · Total Score · Survival Score · Kill · BOOYAH! · Damage · On Target</span><span class="live-pill" id="playerLive">● aguardando</span></div>
+      <div class="table-foot"><span><b>Colunas:</b> POSIÇÃO · EQUIPE · JOGADOR · UID · PONTOS · ABATES · BOOYAH · DANO</span><span class="live-pill" id="playerLive">● aguardando</span></div>
     </div>
 
     <div class="panel" style="padding-top:0"><button class="download" id="downloadAll">BAIXAR TODAS AS INFORMAÇÕES · CSV</button></div>
@@ -241,7 +232,7 @@ const previousRows=new Map();
 const $=s=>document.querySelector(s);
 const esc=v=>String(v??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]));
 function status(text,live=false){$('#statusText').textContent=text;$('#status').classList.toggle('live',live)}
-function keyFor(row,header,index){const h=header.map(x=>String(x).toLowerCase().trim());for(const name of ['uid','player name','team name','nickname','team']){const i=h.indexOf(name);if(i>=0&&String(row[i]??'').trim())return String(row[i]).trim()}return `${index}|${row.join('|')}`}
+function keyFor(row,header,index){const h=header.map(x=>String(x).toLowerCase().trim());for(const name of ['uid','jogador','equipe','team name','player name','nickname','team']){const i=h.indexOf(name);if(i>=0&&String(row[i]??'').trim())return String(row[i]).trim()}return `${index}|${row.join('|')}`}
 function movement(oldRank,newRank){if(oldRank==null||oldRank===newRank)return '<span class="movement same"></span>';return newRank<oldRank?'<span class="movement up">▲</span>':'<span class="movement down">▼</span>'}
 
 function updateTeamSummary(dataObj) {
@@ -255,9 +246,9 @@ function updateTeamSummary(dataObj) {
     return;
   }
   const hLower = header.map(h => h.toLowerCase());
-  const scoreIdx = hLower.findIndex(h => h.includes('score') || h.includes('total') || h.includes('pontos'));
-  const killIdx = hLower.findIndex(h => h.includes('kill') || h.includes('abate'));
-  const survIdx = hLower.findIndex(h => h.includes('survival') || h.includes('sobrevivência'));
+  const scoreIdx = hLower.findIndex(h => h.includes('pontos') || h.includes('score') || h.includes('total'));
+  const killIdx = hLower.findIndex(h => h.includes('abates') || h.includes('kill'));
+  const survIdx = hLower.findIndex(h => h.includes('sobrevivência') || h.includes('survival'));
 
   let maxScore = 0, totalKills = 0, totalSurv = 0;
   rows.forEach(r => {
@@ -283,9 +274,9 @@ function updatePlayerSummary(dataObj) {
     return;
   }
   const hLower = header.map(h => h.toLowerCase());
-  const killIdx = hLower.findIndex(h => h.includes('kill') || h.includes('abate'));
-  const nameIdx = hLower.findIndex(h => h.includes('player') || h.includes('nickname') || h.includes('nome'));
-  const scoreIdx = hLower.findIndex(h => h.includes('score') || h.includes('total') || h.includes('pontos'));
+  const killIdx = hLower.findIndex(h => h.includes('abates') || h.includes('kill'));
+  const nameIdx = hLower.findIndex(h => h.includes('jogador') || h.includes('player') || h.includes('nickname'));
+  const scoreIdx = hLower.findIndex(h => h.includes('pontos') || h.includes('score'));
 
   let totalKills = 0, totalScore = 0, maxKills = -1, topPlayer = '—';
   rows.forEach(r => {
@@ -305,7 +296,7 @@ function updatePlayerSummary(dataObj) {
   $('#psAvgScore').textContent = rows.length ? (totalScore / rows.length).toFixed(1) : '0';
 }
 
-function renderTable(target,matrix,stateKey){
+function renderTable(target, matrix, stateKey){
   if(!matrix || matrix.length === 0){target.innerHTML='<div class="empty">Nenhum dado disponível.</div>';return}
   
   let header, rows;
@@ -318,18 +309,18 @@ function renderTable(target,matrix,stateKey){
   } else {
     const colCount = matrix[0].length;
     if(stateKey === 'team'){
-      // Padrão oficial MatchStats para Equipes na exata ordem exigida
-      const standardTeamHeaders = ['Rank', 'Team ID', 'Team Name', 'Total Score', 'Survival Score', 'Kill', 'BOOYAH!', 'Damage', 'On Target'];
+      // Força os cabeçalhos limpos em Português exatamente como o usuário demonstrou na imagem de referência
+      const exactTeamHeaders = ['POSIÇÃO', 'EQUIPES', 'ABATES', 'PONTOS', 'BOOYAH'];
       header = [];
       for(let c=0; c<colCount; c++){
-        header.push(standardTeamHeaders[c] || `Estatística ${c+1}`);
+        header.push(exactTeamHeaders[c] || `COLUNA ${c+1}`);
       }
     } else {
-      // Padrão oficial MatchStats para Players na exata ordem exigida
-      const standardPlayerHeaders = ['Rank', 'Team Name', 'Player Name', 'UID', 'Total Score', 'Survival Score', 'Kill', 'BOOYAH!', 'Damage', 'On Target'];
+      // Força os cabeçalhos em português corretos para os Jogadores
+      const exactPlayerHeaders = ['POSIÇÃO', 'EQUIPE', 'JOGADOR', 'UID', 'PONTOS', 'ABATES', 'BOOYAH', 'DANO', 'ON TARGET'];
       header = [];
       for(let c=0; c<colCount; c++){
-        header.push(standardPlayerHeaders[c] || `Estatística ${c+1}`);
+        header.push(exactPlayerHeaders[c] || `COLUNA ${c+1}`);
       }
     }
     rows = matrix;
