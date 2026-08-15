@@ -1,9 +1,6 @@
 services:
   - type: web
     name: stats-engine
-    runtime: node
-    buildCommand: npm install && npx playwright install chromium
-    startCommand: npm start
-    envVars:
-      - key: NODE_VERSION
-        value: 22
+    runtime: docker
+    plan: free
+    healthCheckPath: /health

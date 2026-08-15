@@ -1,29 +1,47 @@
 <!doctype html>
-<html lang="pt-BR">
-<head>
+<html lang="pt-BR"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Stats Engine 1.0.1</title>
+<title>Stats Engine 1.0.2</title>
 <style>
-*{box-sizing:border-box}body{margin:0;background:#080b11;color:#eef2f7;font:15px Arial,sans-serif}main{max-width:760px;margin:auto;padding:24px 18px}.sub{color:#8993a3;margin-top:-10px}.badge{display:inline-flex;border:1px solid #263142;border-radius:999px;padding:8px 13px;margin:16px 0}.dot{width:9px;height:9px;border-radius:50%;background:#64748b;margin:4px 8px 0 0}.card{background:#111722;border:1px solid #232d3d;border-radius:18px;padding:20px;margin:18px 0}label{display:block;color:#9aa5b5;font-size:12px;text-transform:uppercase;margin-bottom:9px}input{width:100%;background:#080c12;border:1px solid #293446;color:white;border-radius:13px;padding:17px;font-size:18px}button{border:0;border-radius:13px;padding:15px 22px;margin:12px 6px 0 0;font-weight:bold;font-size:15px}#start{background:white;color:#111}#stop{background:#263143;color:white}.grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}.stat{background:#080c12;border:1px solid #232d3d;border-radius:13px;padding:14px}.stat small{display:block;color:#8792a3;text-transform:uppercase}.stat b{display:block;font-size:25px;margin-top:7px}.box{background:#05080d;border-radius:13px;padding:14px;white-space:pre-wrap;overflow:auto;max-height:520px;font-family:monospace;font-size:12px;color:#cbd5e1}.ok{background:#22c55e}.bad{background:#fb7185}.warn{background:#f59e0b}
-</style>
-</head>
+:root{--bg:#070a10;--panel:#111620;--dark:#05080d;--line:#222b3a;--text:#f4f6fb;--muted:#8e98aa;--ok:#6ee7a0;--bad:#ff637d}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font-family:Inter,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+main{width:min(100%,920px);margin:auto;padding:30px 20px 60px}h1{font-size:34px;margin:0 0 8px}.sub{color:var(--muted);margin-bottom:28px}
+.badge{display:inline-flex;gap:9px;align-items:center;border:1px solid var(--line);border-radius:999px;padding:10px 15px;margin-bottom:22px}.dot{width:9px;height:9px;border-radius:50%;background:#788399}.dot.ok{background:var(--ok)}.dot.bad{background:var(--bad)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:22px;padding:22px;margin-bottom:20px}
+label,.caption{display:block;color:#9ba6b8;font-size:14px;text-transform:uppercase;margin-bottom:10px}
+input{width:100%;height:62px;border-radius:16px;border:1px solid #2b3546;background:#070b12;color:#fff;font-size:22px;padding:0 20px}
+.actions{display:flex;gap:10px;margin-top:16px;flex-wrap:wrap}button{border:0;border-radius:15px;padding:16px 22px;font-size:17px;font-weight:700;cursor:pointer}.start{background:#fff;color:#090b10}.stop{background:#273244;color:#fff}
+button:disabled{opacity:.45}.hint{color:var(--muted);margin-top:13px;line-height:1.45}.grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.stat{min-height:105px;background:var(--dark);border:1px solid var(--line);border-radius:16px;padding:18px}.stat small{display:block;color:#8f9aac;text-transform:uppercase;font-size:12px;margin-bottom:10px}.stat strong{font-size:27px;font-weight:500;word-break:break-word}
+pre{margin:0;background:var(--dark);border-radius:15px;padding:18px;overflow:auto;max-height:520px;color:#d8deea;font:13px/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;white-space:pre-wrap;word-break:break-word}
+@media(max-width:620px){main{padding:22px 18px 45px}h1{font-size:31px}.card{padding:18px;border-radius:20px}}
+</style></head>
 <body><main>
-<h1>Stats Engine <small>1.0.1</small></h1>
-<p class="sub">MatchStats oficial · captura real · atualização de 1 em 1 segundo</p>
-<div class="badge"><i id="dot" class="dot"></i><span id="status">PARADO</span></div>
-<section class="card"><label>Match ID</label><input id="matchId" value="1" inputmode="numeric"><button id="start">▶ INICIAR</button><button id="stop">■ PARAR</button><p class="sub">O Engine consulta o MatchStats no servidor e não exige recarregar esta página.</p></section>
-<section class="card grid">
-<div class="stat"><small>Consultas</small><b id="consultas">0</b></div><div class="stat"><small>Alterações</small><b id="changes">0</b></div>
-<div class="stat"><small>Fase</small><b id="phase">idle</b></div><div class="stat"><small>Intervalo</small><b>1s</b></div>
-</section>
-<section class="card"><label>Diagnóstico</label><div id="diag" class="box">Aguardando.</div></section>
-<section class="card"><label>Dados reais capturados</label><div id="data" class="box">Nenhuma partida monitorada.</div></section>
+<h1>Stats Engine 1.0.2</h1><div class="sub">MatchStats oficial · captura real · página persistente · atualização de 1 em 1 segundo</div>
+<div class="badge"><span id="dot" class="dot"></span><span id="status">PARADO</span></div>
+<section class="card"><label>Match ID</label><input id="matchId" inputmode="numeric" value="1">
+<div class="actions"><button class="start" id="start">▶ INICIAR</button><button class="stop" id="stop">■ PARAR</button></div>
+<div class="hint">O Engine abre o MatchStats uma única vez. A cada segundo ele lê a mesma página; não existe <b>page.goto()</b> dentro do loop.</div></section>
+<section class="card"><div class="grid">
+<div class="stat"><small>Consultas</small><strong id="consultations">0</strong></div>
+<div class="stat"><small>Alterações</small><strong id="changes">0</strong></div>
+<div class="stat"><small>Fase</small><strong id="phase">idle</strong></div>
+<div class="stat"><small>Intervalo</small><strong>1s</strong></div>
+</div></section>
+<section class="card"><div class="caption">Diagnóstico</div><pre id="diagnostic">{}</pre></section>
+<section class="card"><div class="caption">Dados reais capturados</div><pre id="data">Nenhuma partida monitorada.</pre></section>
 </main>
 <script>
 const $=id=>document.getElementById(id);
-async function api(url,opt){let r=await fetch(url,opt);return r.json()}
-$("start").onclick=async()=>{await api("/api/start",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({matchId:$("matchId").value})});update()};
-$("stop").onclick=async()=>{await api("/api/stop",{method:"POST"});update()};
-async function update(){try{let s=await api("/api/status");$("status").textContent=s.status;$("dot").className="dot "+(s.status==="CONNECTED"?"ok":s.status==="ERROR"?"bad":"warn");$("consultas").textContent=s.consultations;$("changes").textContent=s.changes;$("phase").textContent=s.phase; $("diag").textContent=JSON.stringify({status:s.status,phase:s.phase,matchId:s.matchId,currentUrl:s.currentUrl,title:s.title,lastUpdate:s.lastUpdate,error:s.error},null,2);$("data").textContent=s.data?JSON.stringify(s.data,null,2):"Nenhuma partida monitorada."}catch(e){}}
-setInterval(update,1000);update();
+$("start").onclick=async()=>{const matchId=$("matchId").value.trim();if(!matchId)return alert("Informe o Match ID.");$("start").disabled=true;
+try{const r=await fetch("/api/start",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({matchId})});const j=await r.json();if(!j.ok)alert(j.error||"Falha ao iniciar.");}catch{alert("Erro de conexão com o Engine.");}finally{$("start").disabled=false}};
+$("stop").onclick=async()=>{await fetch("/api/stop",{method:"POST"})};
+async function refresh(){try{
+const s=await fetch("/api/status",{cache:"no-store"}).then(r=>r.json());
+$("consultations").textContent=s.consultations??0;$("changes").textContent=s.changes??0;$("phase").textContent=s.phase||"idle";
+const err=!!s.error;$("status").textContent=err?"ERRO":s.running?"CAPTURANDO":"PARADO";$("dot").className="dot "+(err?"bad":s.running?"ok":"");
+$("diagnostic").textContent=JSON.stringify(s,null,2);
+const d=await fetch("/api/data",{cache:"no-store"}).then(r=>r.json());$("data").textContent=d.data?JSON.stringify(d.data,null,2):"Nenhuma partida monitorada.";
+}catch{$("status").textContent="SEM CONEXÃO";$("dot").className="dot bad"}}
+refresh();setInterval(refresh,1000);
 </script></body></html>

@@ -1,234 +1,124 @@
-const express = require("express");
-const { chromium } = require("playwright");
+const express=require("express");
+const path=require("path");
+const {chromium}=require("playwright");
+const app=express();
+app.use(express.json({limit:"1mb"}));
+const PORT=process.env.PORT||3000, HOST="0.0.0.0";
+const BASE="https://matchstats.us.ffesports.com/match?search=";
 
-const app = express();
-app.use(express.json());
+let browser=null,page=null,running=false,pollTimer=null,matchId=null;
+let consultations=0,changes=0,lastSignature="",lastUpdate=null,lastError=null;
+let phase="idle",currentData=null,navigationInProgress=false;
 
-const PORT = process.env.PORT || 10000;
-const MATCHSTATS = "https://matchstats.us.ffesports.com/";
-const INTERVAL = 1000;
+const safe=(v)=>{try{return JSON.parse(JSON.stringify(v))}catch{return null}};
+const sleep=(ms)=>new Promise(r=>setTimeout(r,ms));
 
-let browser = null;
-let page = null;
-let state = {
-  status: "IDLE",
-  phase: "idle",
-  matchId: null,
-  currentUrl: null,
-  title: null,
-  consultations: 0,
-  changes: 0,
-  lastUpdate: null,
-  data: null,
-  error: null
-};
-let timer = null;
-let lastSignature = "";
-
-async function ensurePage() {
-  if (!browser) {
-    browser = await chromium.launch({ headless: true, args: ["--no-sandbox", "--disable-setuid-sandbox"] });
-  }
-  if (!page || page.isClosed()) {
-    page = await browser.newPage({ viewport: { width: 1365, height: 900 } });
-    page.setDefaultNavigationTimeout(30000);
-    page.setDefaultTimeout(10000);
-  }
-  return page;
-}
-
-async function loadHome(p) {
-  state.phase = "opening";
-  // Important: one navigation only. Do not call goto twice while the site redirects.
-  await p.goto(MATCHSTATS, { waitUntil: "domcontentloaded" });
-  await p.waitForLoadState("networkidle", { timeout: 15000 }).catch(() => {});
-  await p.waitForTimeout(1000);
-}
-
-async function findSearchInput(p) {
-  const selectors = [
-    'input[type="search"]',
-    'input[placeholder*="Search" i]',
-    'input[placeholder*="Match" i]',
-    'input[name*="search" i]',
-    'input[id*="search" i]',
-    'input'
-  ];
-  for (const selector of selectors) {
-    const loc = p.locator(selector).first();
-    if (await loc.count()) {
-      try {
-        if (await loc.isVisible()) return loc;
-      } catch {}
-    }
-  }
-  return null;
-}
-
-async function clickSearch(p, input) {
-  const candidates = [
-    'button:has-text("Search")',
-    'button:has-text("Pesquisar")',
-    'input[type="submit"]',
-    'button[type="submit"]'
-  ];
-  for (const selector of candidates) {
-    const b = p.locator(selector).first();
-    if (await b.count()) {
-      try {
-        if (await b.isVisible()) {
-          await b.click();
-          return true;
-        }
-      } catch {}
-    }
-  }
-  await input.press("Enter");
-  return true;
-}
-
-async function extractTables(p) {
-  return await p.evaluate(() => {
-    const tables = [...document.querySelectorAll("table")].map((table, index) => ({
-      index,
-      rows: [...table.querySelectorAll("tr")].map(tr =>
-        [...tr.querySelectorAll("th,td")].map(td => (td.innerText || "").trim())
-      ).filter(row => row.length)
-    })).filter(t => t.rows.length);
-    return {
-      url: location.href,
-      title: document.title,
-      tables,
-      bodyText: (document.body?.innerText || "").slice(0, 50000)
-    };
+async function ensureBrowser(){
+  if(browser?.isConnected()&&page&&!page.isClosed()) return;
+  browser=await chromium.launch({headless:true,args:[
+    "--no-sandbox","--disable-setuid-sandbox","--disable-dev-shm-usage","--disable-gpu"
+  ]});
+  page=await browser.newPage({
+    viewport:{width:1440,height:1000},
+    userAgent:"Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/131 Safari/537.36"
   });
 }
 
-async function searchAndOpenMatch(matchId) {
-  const p = await ensurePage();
-  state.error = null;
-  state.status = "SEARCHING";
-  state.phase = "opening";
-  state.currentUrl = p.url();
-
-  await loadHome(p);
-  state.currentUrl = p.url();
-  state.title = await p.title().catch(() => "");
-
-  state.phase = "search";
-  const input = await findSearchInput(p);
-  if (!input) {
-    throw new Error("Campo de pesquisa do MatchStats não foi localizado.");
-  }
-
-  state.phase = "searching";
-  await input.fill(String(matchId));
-  await clickSearch(p, input);
-  await p.waitForTimeout(1200);
-
-  state.currentUrl = p.url();
-  const result = await extractTables(p);
-
-  // Locate a row containing the requested Match ID.
-  const rows = result.tables.flatMap(t => t.rows);
-  const matchText = String(matchId);
-  const row = rows.find(r => r.some(cell => cell.trim() === matchText));
-  if (!row) {
-    // Keep real page data for diagnosis, but do not pretend it is the match.
-    return { found: false, result };
-  }
-
-  state.phase = "match-found";
-
-  // Try to locate a View link/button associated with the row.
-  const opened = await p.evaluate((matchText) => {
-    const allRows = [...document.querySelectorAll("tr")];
-    const target = allRows.find(tr =>
-      [...tr.querySelectorAll("th,td")].some(td => (td.innerText || "").trim() === matchText)
-    );
-    if (!target) return false;
-    const clickable = target.querySelector('a[href], button');
-    if (!clickable) return false;
-    const text = (clickable.innerText || clickable.textContent || "").trim().toLowerCase();
-    if (text.includes("view") || text.includes("ver") || clickable.tagName === "A") {
-      clickable.click();
-      return true;
-    }
-    return false;
-  }, matchText);
-
-  if (opened) {
-    await p.waitForTimeout(1200);
-  }
-
-  const finalData = await extractTables(p);
-  return { found: true, result: finalData, opened };
+async function openMatchOnce(id){
+  await ensureBrowser();
+  navigationInProgress=true; phase="opening";
+  try{
+    await page.goto(BASE+encodeURIComponent(id),{
+      waitUntil:"domcontentloaded",timeout:45000
+    });
+  }finally{navigationInProgress=false}
+  phase="reading";
+  await sleep(1800);
 }
 
-async function poll() {
-  if (!state.matchId) return;
-  try {
-    const data = await searchAndOpenMatch(state.matchId);
-    state.consultations++;
-    state.lastUpdate = new Date().toISOString();
-    if (!data.found) {
-      state.status = "WAITING";
-      state.phase = "result-not-found";
-      state.data = data.result;
-      const sig = JSON.stringify(data.result.tables);
-      if (sig !== lastSignature) { state.changes++; lastSignature = sig; }
-      return;
-    }
-    state.status = "CONNECTED";
-    state.phase = "captured";
-    state.data = data.result;
-    const sig = JSON.stringify(data.result.tables);
-    if (sig !== lastSignature) { state.changes++; lastSignature = sig; }
-  } catch (err) {
-    state.status = "ERROR";
-    state.error = err.message;
-    state.lastUpdate = new Date().toISOString();
-  }
+async function readPage(){
+  if(!page||page.isClosed()) throw new Error("Página do MatchStats não está disponível.");
+  return await page.evaluate(()=>{
+    const norm=v=>String(v??"").replace(/\u00a0/g," ").replace(/\r/g,"")
+      .replace(/[ \t]+/g," ").trim();
+    const tables=[...document.querySelectorAll("table")].map((t,index)=>({
+      index,
+      rows:[...t.querySelectorAll("tr")].map(tr=>
+        [...tr.querySelectorAll("th,td")].map(td=>norm(td.innerText))
+      ).filter(r=>r.length)
+    })).filter(t=>t.rows.length);
+    return {title:document.title||"Match Stats",url:location.href,
+      tables,bodyText:document.body?.innerText||""};
+  });
 }
 
-app.get("/", (req,res) => res.sendFile(path.join(__dirname, "index.html")));
-app.get("/api/status", (req,res) => res.json(state));
-
-app.post("/api/start", async (req,res) => {
-  const id = String(req.body.matchId || "").trim();
-  if (!id) return res.status(400).json({ error: "Informe o Match ID." });
-  if (timer) clearInterval(timer);
-  state = { status:"STARTING", phase:"opening", matchId:id, currentUrl:null, title:null, consultations:0, changes:0, lastUpdate:null, data:null, error:null };
-  lastSignature = "";
-  poll();
-  timer = setInterval(poll, INTERVAL);
-  res.json(state);
-});
-
-app.post("/api/stop", (req,res) => {
-  if (timer) clearInterval(timer);
-  timer = null;
-  state.status = "STOPPED";
-  state.phase = "idle";
-  res.json(state);
-});
-
-app.get("/api/match/:id", async (req,res) => {
-  try {
-    const result = await searchAndOpenMatch(String(req.params.id));
-    res.json(result);
-  } catch (e) {
-    res.status(500).json({ error:e.message });
+function normalize(raw,id){
+  if(!raw)return null;
+  const tables=raw.tables||[], rows=tables.flatMap(t=>t.rows||[]);
+  const hi=rows.findIndex(r=>r.some(x=>/match id/i.test(x))&&r.some(x=>/season id/i.test(x)));
+  let matchRows=[];
+  if(hi>=0){
+    const head=rows[hi];
+    matchRows=rows.slice(hi+1).filter(r=>r.length>=2&&r.some(Boolean)).map(r=>{
+      const o={}; head.forEach((k,i)=>o[k||`column_${i+1}`]=r[i]??""); return o;
+    });
   }
+  return {capturedAt:new Date().toISOString(),requestedMatchId:String(id),
+    title:raw.title,url:raw.url,matchRows,tables,bodyText:raw.bodyText};
+}
+
+async function capture(){
+  if(!running||!matchId||navigationInProgress)return;
+  consultations++; phase="capturing";
+  try{
+    const data=normalize(await readPage(),matchId);
+    const sig=JSON.stringify({tables:data.tables,bodyText:data.bodyText});
+    if(sig!==lastSignature){
+      if(lastSignature)changes++;
+      lastSignature=sig; currentData=data; lastUpdate=new Date().toISOString();
+    }
+    lastError=null; phase="monitoring";
+  }catch(e){lastError=String(e?.stack||e?.message||e);phase="error"}
+}
+
+function loop(){
+  clearTimeout(pollTimer);
+  const tick=async()=>{if(!running)return;await capture();pollTimer=setTimeout(tick,1000)};
+  tick();
+}
+
+async function stop(close=false){
+  running=false;clearTimeout(pollTimer);pollTimer=null;navigationInProgress=false;
+  if(close&&browser){try{await browser.close()}catch{} browser=null;page=null}
+  if(phase!=="error")phase="stopped";
+}
+
+async function start(id){
+  if(!id)throw new Error("Informe um Match ID.");
+  await stop(false);
+  matchId=String(id).trim();consultations=0;changes=0;lastSignature="";
+  lastUpdate=null;lastError=null;currentData=null;phase="opening";running=true;
+  try{await openMatchOnce(matchId);await capture();loop()}
+  catch(e){lastError=String(e?.stack||e?.message||e);phase="error";running=false;throw e}
+}
+
+app.get("/health",(req,res)=>res.json({ok:true,version:"1.0.2",playwright:"1.62.1",running,phase}));
+app.get("/api/status",(req,res)=>res.json({
+  version:"1.0.2",status:lastError?"ERROR":running?"RUNNING":"IDLE",phase,matchId,
+  currentUrl:page&&!page.isClosed()?page.url():null,title:currentData?.title||null,
+  consultations,changes,lastUpdate,error:lastError,
+  diagnostics:{browserReady:!!browser?.isConnected(),pageReady:!!(page&&!page.isClosed()),
+    navigationInProgress,persistentPage:true,reloadEverySecond:false}
+}));
+app.get("/api/data",(req,res)=>res.json({version:"1.0.2",monitored:!!currentData,data:safe(currentData)}));
+app.post("/api/start",async(req,res)=>{
+  const id=String(req.body?.matchId||"").trim();
+  if(!id)return res.status(400).json({ok:false,error:"Match ID obrigatório."});
+  try{await start(id);res.json({ok:true,version:"1.0.2",matchId:id})}
+  catch(e){res.status(500).json({ok:false,version:"1.0.2",error:String(e?.message||e)})}
 });
-
-app.get("/api/health", (req,res) => res.json({ ok:true, version:"1.0.1" }));
-
-const path = require("path");
-app.listen(PORT, "0.0.0.0", () => console.log(`Stats Engine 1.0.1 running on ${PORT}`));
-
-process.on("SIGTERM", async () => {
-  if (timer) clearInterval(timer);
-  if (browser) await browser.close().catch(()=>{});
-  process.exit(0);
-});
+app.post("/api/stop",async(req,res)=>{await stop(false);res.json({ok:true,version:"1.0.2"})});
+app.get("/",(req,res)=>res.sendFile(path.join(__dirname,"index.html")));
+app.listen(PORT,HOST,()=>console.log(`Stats Engine 1.0.2 running on ${HOST}:${PORT}`));
+process.on("SIGTERM",async()=>{await stop(true);process.exit(0)});
+process.on("SIGINT",async()=>{await stop(true);process.exit(0)});
