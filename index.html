@@ -34,7 +34,7 @@ button,input{font:inherit}button{cursor:pointer}button:disabled{cursor:not-allow
 .tabs{display:flex;gap:4px;padding:4px;background:#0b0b0b;border:1px solid var(--line);border-radius:11px;width:max-content}.tab{height:34px;padding:0 16px;border:0;border-radius:8px;background:transparent;color:#707070;font-size:10px;font-weight:850}.tab.active{background:#222;color:#eee;box-shadow:inset 0 0 0 1px #444}
 .panel{padding:16px}.panel-top{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:10px}.panel-title{font-size:12px;font-weight:850;text-transform:uppercase;letter-spacing:.06em}.panel-desc{font-size:9px;color:#666;margin-top:3px}.panel-actions{display:flex;gap:7px;flex-wrap:wrap}.download{height:34px;padding:0 12px;border:1px solid #343434;border-radius:8px;background:#1d1d1d;color:#ddd;font-size:9px;font-weight:850}.download:hover{background:#282828}
 
-/* Estilização dos Cabeçalhos de Informações Agregadas (Acima da Tabela) */
+/* Cabeçalhos de Informações Agregadas Acima da Tabela */
 .summary-metrics-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
@@ -82,7 +82,7 @@ tbody tr:hover td{background:#191919}
 tbody tr:last-child td{border-bottom:0}
 tbody td:first-child{text-align:center;min-width:56px;color:#f0f0f0;font-weight:850}
 
-/* Animações Complexas de Arrastar/Deslizar (Smooth Drag Matrix Effect) */
+/* Animações Complexas de Arrastar/Deslizar (Smooth Drag Matrix Effect) nas Cores Cinza e Vermelha */
 tr {
   transition: transform 0.6s cubic-bezier(0.25, 1, 0.5, 1), background-color 0.4s ease;
   will-change: transform;
@@ -213,7 +213,7 @@ tr {
       </div>
 
       <div class="table-shell" id="teamTable"><div class="empty">Inicie uma captura para visualizar o ranking das equipes.</div></div>
-      <div class="table-foot"><span><b>Colunas:</b> Rank · Team Name · Total Score · Survival Score · Kill · demais estatísticas disponíveis</span><span class="live-pill" id="teamLive">● aguardando</span></div>
+      <div class="table-foot"><span><b>Colunas:</b> Rank · Team Name · Total Score · Survival Score · Kill · BOOYAH! · Damage · On Target</span><span class="live-pill" id="teamLive">● aguardando</span></div>
     </div>
 
     <!-- PAINEL PLAYER DATA -->
@@ -229,7 +229,7 @@ tr {
       </div>
 
       <div class="table-shell" id="playerTable"><div class="empty">Inicie uma captura para visualizar o ranking dos jogadores.</div></div>
-      <div class="table-foot"><span><b>Colunas:</b> Rank · Team Name · Player Name · UID · Total Score · Survival Score · Kill · demais estatísticas disponíveis</span><span class="live-pill" id="playerLive">● aguardando</span></div>
+      <div class="table-foot"><span><b>Colunas:</b> Rank · Team Name · Player Name · UID · Total Score · Survival Score · Kill · BOOYAH! · Damage · On Target</span><span class="live-pill" id="playerLive">● aguardando</span></div>
     </div>
 
     <div class="panel" style="padding-top:0"><button class="download" id="downloadAll">BAIXAR TODAS AS INFORMAÇÕES · CSV</button></div>
@@ -244,19 +244,20 @@ function status(text,live=false){$('#statusText').textContent=text;$('#status').
 function keyFor(row,header,index){const h=header.map(x=>String(x).toLowerCase().trim());for(const name of ['uid','player name','team name','nickname']){const i=h.indexOf(name);if(i>=0&&String(row[i]??'').trim())return String(row[i]).trim()}return `${index}|${row.join('|')}`}
 function movement(oldRank,newRank){if(oldRank==null||oldRank===newRank)return '<span class="movement same"></span>';return newRank<oldRank?'<span class="movement up">▲</span>':'<span class="movement down">▼</span>'}
 
-function updateTeamSummary(matrix) {
-  if(!matrix || matrix.length < 2) {
+function updateTeamSummary(dataObj) {
+  const rows = dataObj.rows || [];
+  const header = dataObj.header || [];
+  if(!rows.length) {
     $('#tsTeamCount').textContent = '0';
     $('#tsMaxScore').textContent = '0';
     $('#tsTotalKills').textContent = '0';
     $('#tsAvgSurvival').textContent = '0';
     return;
   }
-  const header = matrix[0].map(x => String(x).toLowerCase().trim());
-  const rows = matrix.slice(1);
-  const scoreIdx = header.findIndex(h => h.includes('score') || h.includes('total') || h.includes('pontos'));
-  const killIdx = header.findIndex(h => h.includes('kill') || h.includes('abate'));
-  const survIdx = header.findIndex(h => h.includes('survival') || h.includes('sobrevivência'));
+  const hLower = header.map(h => h.toLowerCase());
+  const scoreIdx = hLower.findIndex(h => h.includes('score') || h.includes('total') || h.includes('pontos'));
+  const killIdx = hLower.findIndex(h => h.includes('kill') || h.includes('abate'));
+  const survIdx = hLower.findIndex(h => h.includes('survival') || h.includes('sobrevivência'));
 
   let maxScore = 0, totalKills = 0, totalSurv = 0;
   rows.forEach(r => {
@@ -271,19 +272,20 @@ function updateTeamSummary(matrix) {
   $('#tsAvgSurvival').textContent = rows.length ? (totalSurv / rows.length).toFixed(1) : '0';
 }
 
-function updatePlayerSummary(matrix) {
-  if(!matrix || matrix.length < 2) {
+function updatePlayerSummary(dataObj) {
+  const rows = dataObj.rows || [];
+  const header = dataObj.header || [];
+  if(!rows.length) {
     $('#psPlayerCount').textContent = '0';
     $('#psTopFragger').textContent = '—';
     $('#psTotalKills').textContent = '0';
     $('#psAvgScore').textContent = '0';
     return;
   }
-  const header = matrix[0].map(x => String(x).toLowerCase().trim());
-  const rows = matrix.slice(1);
-  const killIdx = header.findIndex(h => h.includes('kill') || h.includes('abate'));
-  const nameIdx = header.findIndex(h => h.includes('player') || h.includes('nickname') || h.includes('nome'));
-  const scoreIdx = header.findIndex(h => h.includes('score') || h.includes('total') || h.includes('pontos'));
+  const hLower = header.map(h => h.toLowerCase());
+  const killIdx = hLower.findIndex(h => h.includes('kill') || h.includes('abate'));
+  const nameIdx = hLower.findIndex(h => h.includes('player') || h.includes('nickname') || h.includes('nome'));
+  const scoreIdx = hLower.findIndex(h => h.includes('score') || h.includes('total') || h.includes('pontos'));
 
   let totalKills = 0, totalScore = 0, maxKills = -1, topPlayer = '—';
   rows.forEach(r => {
@@ -304,10 +306,37 @@ function updatePlayerSummary(matrix) {
 }
 
 function renderTable(target,matrix,stateKey){
-  if(!matrix||matrix.length<2){target.innerHTML='<div class="empty">Nenhum dado disponível.</div>';return}
-  const header=matrix[0].map(x=>String(x??'').trim()||'—'),rows=matrix.slice(1),old=previousRows.get(stateKey)||new Map();
+  if(!matrix||matrix.length===0){target.innerHTML='<div class="empty">Nenhum dado disponível.</div>';return}
+  
+  let header, rows;
+  const firstVal = String(matrix[0]?.[0]??'').trim();
+  const isHeaderRow = isNaN(firstVal) && !['1','2','3','4','5','6','7','8','9','10','11','12','13','14','15','16','17','18','19','20'].includes(firstVal);
+
+  if(isHeaderRow){
+    header = matrix[0].map(x=>String(x??'').trim()||'—');
+    rows = matrix.slice(1);
+  } else {
+    const colCount = matrix[0].length;
+    if(stateKey === 'team'){
+      const defaultTeamHeaders = ['Rank', 'Team Name', 'Total Score', 'Survival Score', 'Kill', 'BOOYAH!', 'Damage', 'On Target'];
+      header = [];
+      for(let c=0; c<colCount; c++){
+        header.push(defaultTeamHeaders[c] || `Coluna ${c+1}`);
+      }
+    } else {
+      const defaultPlayerHeaders = ['Rank', 'Team Name', 'Player Name', 'UID', 'Total Score', 'Survival Score', 'Kill', 'BOOYAH!', 'Damage', 'On Target'];
+      header = [];
+      for(let c=0; c<colCount; c++){
+        header.push(defaultPlayerHeaders[c] || `Coluna ${c+1}`);
+      }
+    }
+    rows = matrix;
+  }
+
+  const old=previousRows.get(stateKey)||new Map();
   target.innerHTML='<table><thead><tr>'+header.map(x=>`<th>${esc(x)}</th>`).join('')+'</tr></thead><tbody></tbody></table>';
   const tbody=target.querySelector('tbody');
+  
   rows.forEach((row,i)=>{
     const key=keyFor(row,header,i),oldInfo=old.get(key),rank=i+1,tr=document.createElement('tr');
     tr.dataset.key=key;
@@ -317,10 +346,13 @@ function renderTable(target,matrix,stateKey){
     tr.innerHTML=header.map((_,c)=>`<td>${esc(row[c]??'')}${c===0?movement(oldInfo?.rank,rank):''}</td>`).join('');
     tbody.appendChild(tr);
   });
-  const next=new Map();rows.forEach((row,i)=>next.set(keyFor(row,header,i),{rank:i+1}));previousRows.set(stateKey,next);
+  
+  const next=new Map();
+  rows.forEach((row,i)=>next.set(keyFor(row,header,i),{rank:i+1}));
+  previousRows.set(stateKey,next);
 
-  if(stateKey === 'team') updateTeamSummary(matrix);
-  if(stateKey === 'player') updatePlayerSummary(matrix);
+  if(stateKey === 'team') updateTeamSummary({header, rows});
+  if(stateKey === 'player') updatePlayerSummary({header, rows});
 }
 
 function paint(data,isLive=false){
@@ -328,8 +360,8 @@ function paint(data,isLive=false){
   result=data;
   const time=new Date().toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
   $('#kMatch').textContent=data.matchId||'—';
-  $('#kTeam').textContent=Math.max(0,(data.teamData||[]).length-1);
-  $('#kPlayer').textContent=Math.max(0,(data.playerData||[]).length-1);
+  $('#kTeam').textContent=Math.max(0,(data.teamData||[]).length-(data.teamData && isNaN(String(data.teamData[0]?.[0]))?1:0));
+  $('#kPlayer').textContent=Math.max(0,(data.playerData||[]).length-(data.playerData && isNaN(String(data.playerData[0]?.[0]))?1:0));
   $('#kTime').textContent=time;
   $('#updated').textContent='Atualizado às '+time;
   $('#source').textContent='Fonte: MatchStats oficial · '+(data.sourceUrl||'View');
