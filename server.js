@@ -79,8 +79,31 @@ function normalizeMatrix(matrix, kind) {
     return -1;
   };
 
-  // Keep the official columns, but guarantee the first identification
-  // columns use clear labels in our interface.
+  // The MatchStats header can contain grouped cells. Never allow values from
+  // the first two ranked records (for example "1 / 2" or "UID1 / UID2") to
+  // become column names. Those records must remain normal body rows.
+  const looksLikeData = value => {
+    const v = clean(value);
+    if (!v) return true;
+    if (/^\d+(?:[.,]\d+)?(?:\s*\/\s*\d+(?:[.,]\d+)?)?$/.test(v)) return true;
+    if (/^\d+\s*\/\s*\d+$/.test(v)) return true;
+    return false;
+  };
+
+  const labelAliases = kind === "team"
+    ? /rank|team|equipe|score|survival|kill|damage|headshot|assist|position|uid|id|point/i
+    : /rank|player|nickname|nick|team|equipe|uid|id|score|survival|kill|damage|headshot|assist|knock|rescue|revive|position/i;
+
+  if (header.some(looksLikeData) || header.some(v => !labelAliases.test(v))) {
+    // Keep only a clean label for columns that were accidentally merged with
+    // the top records. For normal labels this is a no-op.
+    header = header.map((v, i) => {
+      const parts = clean(v).split(/\s+\/\s+/).map(clean).filter(Boolean);
+      const good = parts.find(x => !looksLikeData(x) && labelAliases.test(x));
+      return good || (parts.length === 1 && !looksLikeData(parts[0]) ? parts[0] : `Coluna ${i + 1}`);
+    });
+  }
+
   const rankIdx = find("rank", "posicao", "position");
   if (rankIdx >= 0) header[rankIdx] = "Rank";
   else {
@@ -89,34 +112,36 @@ function normalizeMatrix(matrix, kind) {
   }
 
   if (kind === "team") {
-    const teamIdx = find("teamname", "teamname", "team", "equipe");
-    if (teamIdx >= 0) header[teamIdx] = "Team Name";
-
+    const teamIdx = find("teamname", "team", "equipe");
     const survivalIdx = find("survivalscore", "survivalpoints", "survivalpoint", "survivals");
     const killIdx = find("kills", "kill", "eliminacoes", "eliminacao");
     const totalIdx = find("totalscore", "totalpoints", "totalpoint", "points", "score");
 
+    if (teamIdx >= 0) header[teamIdx] = "Team Name";
     if (survivalIdx >= 0) header[survivalIdx] = "Survival Score";
     if (killIdx >= 0) header[killIdx] = "Kill";
     if (totalIdx >= 0) header[totalIdx] = "Total Score";
   } else {
-    const nickIdx = find("nickname", "playername", "player", "nick");
-    if (nickIdx >= 0) header[nickIdx] = "Nickname";
+    const playerIdx = find("playername", "nickname", "player", "nick");
     const teamIdx = find("teamname", "team", "equipe");
-    if (teamIdx >= 0) header[teamIdx] = "Team Name";
     const uidIdx = find("uid", "playerid", "accountid");
-    if (uidIdx >= 0) header[uidIdx] = "UID";
+    const survivalIdx = find("survivalscore", "survivalpoints", "survivalpoint", "survivals");
     const killIdx = find("kills", "kill", "eliminacoes", "eliminacao");
+    const totalIdx = find("totalscore", "totalpoints", "totalpoint", "points", "score");
+
+    if (playerIdx >= 0) header[playerIdx] = "Player Name";
+    if (teamIdx >= 0) header[teamIdx] = "Team Name";
+    if (uidIdx >= 0) header[uidIdx] = "UID";
+    if (survivalIdx >= 0) header[survivalIdx] = "Survival Score";
     if (killIdx >= 0) header[killIdx] = "Kill";
+    if (totalIdx >= 0) header[totalIdx] = "Total Score";
   }
 
-  // Always enumerate Rank according to the currently returned rows.
   const finalRankIdx = header.findIndex(h => norm(h) === "rank");
   if (finalRankIdx >= 0) body.forEach((row, i) => row[finalRankIdx] = String(i + 1));
 
   return [header, ...body];
 }
-
 async function searchMatch(page, matchId) {
   const id = String(matchId).trim();
 
@@ -255,17 +280,47 @@ async function extractSection(page, section) {
         return grid;
       }
 
-      function normalizeHeader(rows) {
-        const expanded = expandRows(rows);
-        const width = Math.max(0, ...expanded.map(r => r.length));
-        return Array.from({ length: width }, (_, c) => {
-          const parts = [];
-          for (let r = 0; r < expanded.length; r++) {
-            const value = clean(expanded[r]?.[c] || "");
-            if (value && !parts.includes(value)) parts.push(value);
-          }
-          return parts.join(" / ");
-        });
+      function expandRow(row) {
+        const out = [];
+        let col = 0;
+        for (const cell of row.querySelectorAll(":scope > th, :scope > td")) {
+          while (out[col] !== undefined) col++;
+          const text = clean(cell.innerText);
+          const cs = Math.max(1, Number(cell.getAttribute("colspan") || 1));
+          for (let cc = 0; cc < cs; cc++) out[col + cc] = text;
+          col += cs;
+        }
+        return out;
+      }
+
+      function headerScore(values, wantedSection) {
+        const text = values.join(" | ");
+        const known = wantedSection === "Team Data"
+          ? /rank|team|equipe|score|survival|kill|damage|headshot|assist|position|uid|id|point/ig
+          : /rank|player|nickname|nick|team|equipe|uid|id|score|survival|kill|damage|headshot|assist|knock|rescue|revive|position/ig;
+        let score = 0;
+        for (const value of values) {
+          if (!value) continue;
+          if (known.test(value)) score += 12;
+          if (/^\d+(?:[.,]\d+)?(?:\s*\/\s*\d+(?:[.,]\d+)?)?$/.test(value)) score -= 20;
+          else if (value.length > 24 && !/\s/.test(value)) score -= 8;
+          else score += 2;
+        }
+        if (/\brank\b/i.test(text)) score += 30;
+        if (wantedSection === "Team Data" && /team\s*name|teamname/i.test(text)) score += 35;
+        if (wantedSection === "Player Data" && /player\s*name|nickname|nick/i.test(text)) score += 35;
+        return score;
+      }
+
+      function chooseHeaderRows(rows, wantedSection) {
+        if (!rows.length) return [];
+        const candidates = rows.map(row => expandRow(row));
+        let best = candidates[0], bestScore = -Infinity;
+        for (const values of candidates) {
+          const score = headerScore(values, wantedSection);
+          if (score > bestScore) { bestScore = score; best = values; }
+        }
+        return best;
       }
 
       const tables = [...document.querySelectorAll("table")].filter(t => {
@@ -280,10 +335,22 @@ async function extractSection(page, section) {
         if (!allRows.length) continue;
 
         const headerRows = theadRows.length ? theadRows : allRows.slice(0, Math.min(2, allRows.length));
-        const header = normalizeHeader(headerRows);
-        const bodyRows = theadRows.length
-          ? (table.querySelector("tbody") ? [...table.querySelector("tbody").querySelectorAll(":scope > tr")] : allRows.slice(theadRows.length))
-          : allRows.slice(headerRows.length);
+        const header = chooseHeaderRows(headerRows, wantedSection);
+        let bodyRows;
+        if (theadRows.length) {
+          bodyRows = table.querySelector("tbody")
+            ? [...table.querySelector("tbody").querySelectorAll(":scope > tr")]
+            : allRows.slice(theadRows.length);
+        } else {
+          // Without a <thead>, only the selected header row is a header.
+          // The next row is Rank 1, followed by Rank 2, etc.; never discard
+          // the first two ranked records as if they were header rows.
+          const selectedHeaderIndex = headerRows.findIndex(row => {
+            const values = expandRow(row);
+            return values.length === header.length && values.every((v, i) => v === header[i]);
+          });
+          bodyRows = allRows.slice(Math.max(0, selectedHeaderIndex) + 1);
+        }
         const body = bodyRows.map(tr => [...tr.querySelectorAll(":scope > td, :scope > th")].map(c => clean(c.innerText))).filter(r => r.length);
         if (!header.length || !body.length) continue;
 
@@ -319,16 +386,14 @@ async function installLiveObserver(page) {
     window.__statsVersion = 0;
     window.__statsObserverInstalled = true;
     window.__statsSuspend = false;
-    clearTimeout(window.__statsMutationTimer);
-    window.__statsMutationTimer = null;
     window.__statsObserver?.disconnect();
 
+    // The observer fires immediately when MatchStats changes the table.
+    // The server checks this version every 30ms, so the next snapshot is
+    // never intentionally delayed by the previous 90ms debounce.
     const bump = () => {
       if (window.__statsSuspend) return;
-      clearTimeout(window.__statsMutationTimer);
-      window.__statsMutationTimer = setTimeout(() => {
-        window.__statsVersion++;
-      }, 90);
+      window.__statsVersion++;
     };
 
     const observer = new MutationObserver(bump);
@@ -341,47 +406,38 @@ async function installLiveObserver(page) {
   });
 }
 
-async function refreshSnapshot() {
-  if (!page || !lastResult) return null;
+let livePollTimer = null;
+let liveRefreshBusy = false;
+let liveSeenVersion = -1;
 
-  await page.evaluate(() => { window.__statsSuspend = true; }).catch(() => {});
-  try {
-    const team = await extractSection(page, "Team Data");
-    const player = await extractSection(page, "Player Data");
-    const next = {
-      ...lastResult,
-      sourceUrl: page.url() || lastResult.sourceUrl,
-      capturedAt: new Date().toISOString(),
-      teamData: team.length >= 2 ? team : lastResult.teamData,
-      playerData: player.length >= 2 ? player : lastResult.playerData
-    };
-    if (!sameData(next, lastResult)) {
-      lastResult = next;
-      broadcast(lastResult);
-      return next;
-    }
-    return lastResult;
-  } finally {
-    await page.evaluate(() => { window.__statsSuspend = false; }).catch(() => {});
-  }
+function stopLiveWatch() {
+  if (livePollTimer) clearInterval(livePollTimer);
+  livePollTimer = null;
+  liveRefreshBusy = false;
+  liveSeenVersion = -1;
 }
 
-async function liveWatchLoop() {
-  if (liveWatchTask) return;
-  liveWatchTask = (async () => {
-    while (page && lastResult) {
-      try {
-        const before = await page.evaluate(() => window.__statsVersion || 0);
-        await page.waitForFunction(v => (window.__statsVersion || 0) > v, before, { timeout: 0 });
-        await refreshSnapshot();
-      } catch {
-        break;
-      }
+function liveWatchLoop() {
+  stopLiveWatch();
+  livePollTimer = setInterval(async () => {
+    if (!page || !lastResult || liveRefreshBusy) return;
+    try {
+      const version = await page.evaluate(() => window.__statsVersion || 0);
+      if (version === liveSeenVersion) return;
+      liveSeenVersion = version;
+      liveRefreshBusy = true;
+      await refreshSnapshot();
+    } catch {
+      // Keep the 30ms watcher alive. A transient Playwright/DOM read failure
+      // must not stop live capture for the whole match.
+    } finally {
+      liveRefreshBusy = false;
     }
-  })().finally(() => { liveWatchTask = null; });
+  }, 30);
 }
 
 async function capture(matchId) {
+  stopLiveWatch();
   const p = await getPage();
   await searchMatch(p, matchId);
   await p.waitForLoadState("domcontentloaded", { timeout: 4000 }).catch(() => {});
@@ -420,7 +476,7 @@ app.get("/api/events", (req, res) => {
 });
 
 app.get("/api/health", (req, res) => {
-  res.json({ ok: true, version: "1.0.12", busy, hasBrowser: !!browser, live: !!liveWatchTask });
+  res.json({ ok: true, version: "1.0.14", busy, hasBrowser: !!browser, live: !!livePollTimer, pollMs: 30 });
 });
 
 app.post("/api/capture", async (req, res) => {
@@ -444,10 +500,11 @@ app.post("/api/capture", async (req, res) => {
 
 app.get("/api/last", (req, res) => res.json({ ok: true, result: lastResult }));
 
-app.listen(PORT, "0.0.0.0", () => console.log(`Stats Engine 1.0.12 running on port ${PORT}`));
+app.listen(PORT, "0.0.0.0", () => console.log(`Stats Engine 1.0.14 running on port ${PORT}`));
 
 process.on("SIGTERM", async () => {
   for (const res of sseClients) { try { res.end(); } catch {} }
+  stopLiveWatch();
   try { await browser?.close(); } catch {}
   process.exit(0);
 });

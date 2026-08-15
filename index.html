@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
-<title>Stats Engine 1.0.13</title>
+<title>Stats Engine 1.0.14</title>
 <style>
 :root{--bg:#090909;--panel:#151515;--panel2:#101010;--line:#2b2b2b;--line2:#202020;--text:#e7e7e7;--muted:#8d8d8d;--accent:#cfcfcf;--good:#58d68d;--danger:#e36b6b;--up:#70c995;--down:#d97979}
 *{box-sizing:border-box}
@@ -82,7 +82,7 @@ tbody tr{transition:background .15s ease;will-change:auto;height:31px}tbody tr t
     <label>Match ID</label>
     <div class="search"><input id="matchId" inputmode="numeric" autocomplete="off" value="2088449371717292032" placeholder="Digite o MatchID"><button id="start">▶ INICIAR CAPTURA</button></div>
     <div class="loading" id="loading"><span class="spinner"></span>Localizando a partida e abrindo o View…</div>
-    <div class="notice">A busca é feita diretamente no servidor. Depois que o View é encontrado, o Engine acompanha as mudanças da própria página do MatchStats e envia somente quando os dados realmente mudarem.</div>
+    <div class="notice">A busca é feita diretamente no servidor. Depois que o View é encontrado, o Engine verifica as mudanças do MatchStats a cada 30 milissegundos e atualiza os dados somente quando houver alteração real.</div>
     <div class="error" id="error"></div>
     <div class="livebar" id="livebar" style="display:none"><i></i></div>
   </section>
@@ -103,14 +103,14 @@ tbody tr{transition:background .15s ease;will-change:auto;height:31px}tbody tr t
 
     <div id="teamPanel">
       <div class="section-head"><strong>Ranking das equipes</strong><span id="teamUpdated">Aguardando captura</span></div>
-      <div class="table-caption">Team Data · classificação e estatísticas das equipes</div>
+      <div class="table-caption">Cabeçalho acima da tabela: Rank · Team Name · Total Score · Survival Score · Kill · demais estatísticas</div>
       <div class="tablebox" id="teamTable"><div class="empty">Nenhum TeamData capturado.</div></div>
       <div class="download"><button id="downloadTeam">↓ BAIXAR TEAMDATA</button></div>
     </div>
 
     <div id="playerPanel" style="display:none">
       <div class="section-head"><strong>Ranking dos jogadores</strong><span id="playerUpdated">Aguardando captura</span></div>
-      <div class="table-caption">Player Data · classificação e estatísticas individuais</div>
+      <div class="table-caption">Cabeçalho acima da tabela: Rank · Team Name · Player Name · UID · Total Score · Survival Score · Kill · demais estatísticas</div>
       <div class="tablebox" id="playerTable"><div class="empty">Nenhum PlayerData capturado.</div></div>
       <div class="download"><button id="downloadPlayer">↓ BAIXAR PLAYERDATA</button></div>
     </div>
