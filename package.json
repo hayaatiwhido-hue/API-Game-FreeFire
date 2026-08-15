@@ -1,8 +1,8 @@
 {
-  "name": "stats-engine-matchstats",
-  "version": "1.2.0",
+  "name": "stats-engine-matchstats-v2",
+  "version": "2.0.0",
   "private": true,
-  "description": "Stats Engine para captura real do MatchStats com Playwright.",
+  "description": "Stats Engine V2: captura real do MatchStats com Playwright, página persistente e polling de 1 segundo.",
   "scripts": {
     "start": "node server.js"
   },

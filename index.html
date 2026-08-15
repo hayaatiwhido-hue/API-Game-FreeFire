@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Stats Engine — Teste</title>
+<title>Stats Engine V2 — MatchStats</title>
 <style>
 *{box-sizing:border-box}
 body{margin:0;background:#080b12;color:#f5f7fb;font:14px system-ui,Arial,sans-serif}
@@ -13,6 +13,7 @@ h1{margin:0;font-size:25px}.muted{margin-top:5px;color:#8e99aa;font-size:12px}
 .status{border:1px solid #263043;border-radius:999px;padding:8px 12px;font-size:12px}
 .dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:#667085;margin-right:7px}
 .dot.on{background:#32d583;box-shadow:0 0 12px #32d583}
+.dot.err{background:#ff5b67}
 .card{margin-top:15px;background:#10151f;border:1px solid #202a39;border-radius:15px;padding:16px}
 label{display:block;color:#98a3b4;font-size:11px;font-weight:800;margin-bottom:7px}
 .row{display:grid;grid-template-columns:1fr auto;gap:9px}
@@ -21,8 +22,9 @@ button{height:45px;border:0;border-radius:9px;padding:0 16px;font-weight:800;cur
 .go{background:#fff;color:#080b12}.stop{background:#252d3a;color:#fff}
 .metrics{display:grid;grid-template-columns:repeat(4,1fr);gap:9px}
 .metric{background:#0a0e15;border:1px solid #202a39;border-radius:10px;padding:13px}
-.metric b{display:block;color:#8e99aa;font-size:10px}.metric strong{display:block;font-size:20px;margin-top:4px}
-pre{white-space:pre-wrap;word-break:break-word;background:#070a0f;border-radius:10px;padding:12px;max-height:600px;overflow:auto;color:#b8c2d0;font:12px ui-monospace,monospace}
+.metric b{display:block;color:#8e99aa;font-size:10px}.metric strong{display:block;font-size:18px;margin-top:4px}
+pre{white-space:pre-wrap;word-break:break-word;background:#070a0f;border-radius:10px;padding:12px;max-height:650px;overflow:auto;color:#b8c2d0;font:12px ui-monospace,monospace}
+.small{color:#8e99aa;font-size:11px;margin-top:8px}
 @media(max-width:700px){.top{align-items:flex-start;flex-direction:column}.row{grid-template-columns:1fr}.metrics{grid-template-columns:repeat(2,1fr)}main{padding:14px}}
 </style>
 </head>
@@ -30,8 +32,8 @@ pre{white-space:pre-wrap;word-break:break-word;background:#070a0f;border-radius:
 <main>
   <div class="top">
     <div>
-      <h1>Stats Engine</h1>
-      <div class="muted">MatchStats oficial · captura real · atualização de 1 em 1 segundo</div>
+      <h1>Stats Engine V2</h1>
+      <div class="muted">MatchStats oficial · página persistente · verificação de 1 em 1 segundo</div>
     </div>
     <div class="status"><span id="dot" class="dot"></span><span id="status">PARADO</span></div>
   </div>
@@ -39,21 +41,27 @@ pre{white-space:pre-wrap;word-break:break-word;background:#070a0f;border-radius:
   <div class="card">
     <label>MATCH ID</label>
     <div class="row">
-      <input id="matchId" placeholder="Digite um MatchID real">
+      <input id="matchId" placeholder="Digite um MatchID real" value="1">
       <div>
         <button class="go" id="start">▶ INICIAR</button>
         <button class="stop" id="stop">■ PARAR</button>
       </div>
     </div>
+    <div class="small">A página do MatchStats permanece aberta. O Engine não faz reload a cada segundo.</div>
   </div>
 
   <div class="card">
     <div class="metrics">
       <div class="metric"><b>CONSULTAS</b><strong id="polls">0</strong></div>
       <div class="metric"><b>ALTERAÇÕES</b><strong id="changes">0</strong></div>
-      <div class="metric"><b>ÚLTIMA ATUALIZAÇÃO</b><strong id="last">—</strong></div>
+      <div class="metric"><b>FASE</b><strong id="phase">idle</strong></div>
       <div class="metric"><b>INTERVALO</b><strong>1s</strong></div>
     </div>
+  </div>
+
+  <div class="card">
+    <label>DIAGNÓSTICO</label>
+    <pre id="diag">Aguardando início.</pre>
   </div>
 
   <div class="card">
@@ -65,29 +73,48 @@ pre{white-space:pre-wrap;word-break:break-word;background:#070a0f;border-radius:
 <script>
 const $ = id => document.getElementById(id);
 
+function render(s) {
+  $("status").textContent = s.status || "PARADO";
+  $("phase").textContent = s.phase || "idle";
+
+  const connected = s.running && s.status === "CONECTADO";
+  $("dot").classList.toggle("on", !!connected);
+  $("dot").classList.toggle("err", s.status === "ERRO");
+
+  $("polls").textContent = s.polls ?? 0;
+  $("changes").textContent = s.changes ?? 0;
+
+  $("diag").textContent = JSON.stringify({
+    status: s.status,
+    phase: s.phase,
+    matchId: s.matchId,
+    currentUrl: s.currentUrl,
+    title: s.title,
+    diagnostics: s.diagnostics,
+    lastUpdate: s.lastUpdate,
+    error: s.error
+  }, null, 2);
+
+  if (s.error) {
+    $("output").textContent = "ERRO:\n" + s.error +
+      "\n\nDIAGNÓSTICO:\n" + JSON.stringify(s.diagnostics, null, 2);
+  } else if (s.data) {
+    $("output").textContent = JSON.stringify(s.data, null, 2);
+  }
+}
+
 async function refresh() {
   try {
     const r = await fetch("/api/state", {cache:"no-store"});
-    render(await r.json());
+    if (r.ok) render(await r.json());
   } catch {}
-}
-
-function render(s) {
-  $("status").textContent = s.status || "PARADO";
-  $("dot").classList.toggle("on", !!(s.running && s.status === "CONECTADO"));
-  $("polls").textContent = s.polls ?? 0;
-  $("changes").textContent = s.changes ?? 0;
-  $("last").textContent = s.lastUpdate
-    ? new Date(s.lastUpdate).toLocaleTimeString()
-    : "—";
-
-  if (s.error) $("output").textContent = "ERRO: " + s.error;
-  else if (s.data) $("output").textContent = JSON.stringify(s.data, null, 2);
 }
 
 $("start").onclick = async () => {
   const matchId = $("matchId").value.trim();
   if (!matchId) return alert("Digite um MatchID real.");
+
+  $("status").textContent = "INICIANDO";
 
   try {
     const r = await fetch("/api/start", {
@@ -95,10 +122,15 @@ $("start").onclick = async () => {
       headers:{"Content-Type":"application/json"},
       body:JSON.stringify({matchId})
     });
+
     const result = await r.json();
-    if (result.error) throw new Error(result.error);
-    render(result);
-  } catch(e) {
+
+    if (!r.ok || result.error) {
+      throw new Error(result.error || "Não foi possível iniciar.");
+    }
+
+    render(result.state);
+  } catch (e) {
     alert(e.message);
   }
 };

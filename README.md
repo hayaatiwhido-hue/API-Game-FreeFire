@@ -1,8 +1,25 @@
-# Stats Engine v1.2
+# Stats Engine V2
 
-## Estrutura para envio pelo celular
+## O que foi corrigido
 
-Todos os arquivos importantes estão diretamente na raiz:
+A V1 fazia a operação de pesquisa de forma bloqueante e depois recarregava a página a cada segundo. Isso não é adequado para uma aplicação JavaScript como o MatchStats.
+
+A V2 muda a arquitetura:
+
+1. Abre o MatchStats com Chromium/Playwright.
+2. Espera a aplicação JavaScript carregar.
+3. Localiza a área de Match e o campo real de MatchID.
+4. Pesquisa o MatchID.
+5. Mantém a mesma página aberta.
+6. Captura o DOM visível a cada 1 segundo.
+7. Compara os dados capturados e contabiliza alterações.
+8. Não usa dados fictícios.
+9. A API `/api/start` responde imediatamente; a inicialização do navegador continua em segundo plano, evitando que a interface fique presa esperando o processo terminar.
+10. Inclui diagnóstico da fase atual, URL, título, campo encontrado e pesquisa acionada.
+
+## Arquivos
+
+Todos ficam diretamente na raiz do repositório:
 
 - index.html
 - server.js
@@ -12,42 +29,36 @@ Todos os arquivos importantes estão diretamente na raiz:
 - .dockerignore
 - README.md
 
-Não existe pasta `public`.
+## Deploy no Render
 
-## Objetivo
+Use:
+- Runtime: Docker
+- Root Directory: vazio
+- Instance: Free para o primeiro teste
 
-Validar somente:
+Depois do deploy, abra a URL do serviço e use o MatchID real.
 
-MatchID real → MatchStats oficial → navegador Playwright → captura real → painel → atualização de 1 segundo.
+## Importante sobre o teste
 
-Nenhum dado fictício é incluído.
+O painel agora diferencia:
 
-## Render
+- INICIANDO
+- PESQUISANDO
+- CONECTADO
+- ERRO
 
-O projeto usa Docker porque o Playwright precisa do navegador Chromium.
+Se ocorrer erro, o bloco DIAGNÓSTICO mostra em qual etapa ocorreu.
 
-No Render:
-1. Crie um Web Service.
-2. Conecte o GitHub.
-3. Selecione o repositório.
-4. Runtime/Language: Docker.
-5. Dockerfile: `./Dockerfile`.
-6. O `CMD` do Dockerfile inicia o servidor.
+O endpoint `/health` confirma que o servidor está vivo.
 
-O `render.yaml` também pode ser usado como Blueprint.
+## Fonte
 
-## GitHub pelo celular
+O projeto aponta por padrão para:
 
-Como o `index.html` está na raiz, você pode criar/enviar cada arquivo diretamente na raiz do repositório, sem precisar enviar a pasta `public`.
+https://matchstats.us.ffesports.com/
 
-## Atualização do código
+A página do MatchStats é uma aplicação JavaScript e exibe uma interface de consulta de partidas. A captura nesta versão é feita pelo navegador automatizado, não por dados fictícios.
 
-Com o repositório conectado ao Render, novos commits na branch configurada podem disparar novos deploys.
+## Próxima etapa
 
-## Teste
-
-Abra a URL do serviço, coloque um MatchID real e clique em INICIAR.
-
-O painel mostra o snapshot bruto que o navegador automatizado capturou do MatchStats.
-
-Se aparecer erro de campo, navegação ou carregamento, o erro deve ser corrigido antes de transformar os dados em leaderboard, jogadores, kills etc.
+Só depois de confirmar que o MatchID real está sendo encontrado e que o DOM contém os dados verdadeiros, devemos criar o parser estruturado para equipes, jogadores, kills, posição, pontos e demais informações.
