@@ -1,16 +1,10 @@
-Stats Engine 1.0.11
+Stats Engine 2.2.0
 
-Correções:
-- MatchID não é mais considerado inválido por ter menos de 5 dígitos.
-- O MatchID é tratado como texto numérico, preservando IDs longos.
-- Pesquisa do MatchStats reforçada com Enter + botão de pesquisa.
-- Localização da linha exata do MatchID antes de clicar em View.
-- Captura de Team Data e Player Data com espera dinâmica, sem atraso fixo longo.
-- index.html permanece diretamente na raiz do projeto/ZIP.
+Nova função: Cadastro de jogadores por ID.
 
+Exemplo:
+431899074 = Jota99z!
 
-1.0.11
-- Atualização real automática no servidor a cada 1 segundo.
-- Recarrega a URL View atual sem pesquisar o MatchID novamente.
-- Extração de cabeçalhos com rowspan/colspan para manter Rank, TeamName e cabeçalhos dos jogadores.
-- index.html permanece diretamente na raiz do ZIP.
+Mesmo que o MatchStats mostre RSE.italo7 para o ID 431899074, o sistema exibirá Jota99z! no Player Data, no seletor e nas exportações.
+
+Os cadastros ficam em players.json. O cadastro/alteração/exclusão pode ser feito diretamente pela interface.

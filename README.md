@@ -1,68 +1,27 @@
-# FFWS Stats Engine · Multi Match + vMix
+# Stats Engine 2.2.0
 
-Sistema para adicionar vários MatchIDs do MatchStats, acompanhar as quedas em tempo real e alimentar overlays para vMix.
+Leitor de Team Data e Player Data do MatchStats com cadastro local de jogadores.
 
-## O que foi adicionado
+## Cadastro de jogadores
 
-- Vários MatchIDs ao mesmo tempo.
-- Seleção de **UMA QUEDA** ou **TODAS AS QUEDAS**.
-- No modo **TODAS AS QUEDAS**, Team Data e Player Data são somados por equipe/jogador.
-- Atualização do servidor programada em **1 ms**, com proteção para não executar duas leituras simultaneamente no mesmo MatchID.
-- Cabeçalhos Team Data e Player Data mantidos na ordem canônica e com correção do desalinhamento entre cabeçalho e dados.
-- Ranking da Queda: liga/desliga e fica persistente enquanto ativado.
-- TOPs: entram automaticamente quando o líder/valor muda.
-- Botão TESTAR para cada overlay.
-- Preview ao vivo dentro da interface principal.
-- Overlays para equipe e jogador, com animação de entrada/saída.
-- `overlay-config.js` para posição, campeonato, sponsor, texto extra e configurações visuais.
-- PNGs 1920×1080 prontos para substituir, todos na raiz do projeto.
-- `overlay-data.js` para mapear logos de equipes e fotos de jogadores.
+Na interface existe uma seção **Cadastro de jogadores**. Cadastre:
 
-## Overlays
+- **ID do jogador**: o Player ID/UID que aparece no MatchStats.
+- **Nick registrado**: o nome que você quer que apareça no sistema.
 
-### Equipes
-- `teamKills` — Equipe com mais Abates
-- `teamDamage` — Top Dano
-- `teamHeadshots` — Headshots
-- `teamAssist` — Top Assist.
-- `teamRevival` — Top Revival
-- `teamEliminated` — Equipe Eliminada, somente quando houver estado explícito de eliminado/morto nos dados disponíveis
-- `ranking` — Ranking da Queda
+Exemplo:
 
-### Jogadores
-- `playerKills`
-- `playerDamage`
-- `playerAssist`
-- `playerMovingDistance`
-- `playerHeadshots`
-- `playerKnockDown`
-- `playerRescueMembers`
-- `playerMaximumKillDistance`
+`431899074` → `Jota99z!`
 
-## URLs para vMix
+Quando o MatchStats retornar `431899074` com o Nick `RSE.italo7`, a interface passa a mostrar `Jota99z!` no Player Data e no seletor de jogadores.
 
-- `/overlay-ranking.html`
-- `/overlay-team-top.html?key=teamKills`
-- `/overlay-team-top.html?key=teamDamage`
-- `/overlay-team-top.html?key=teamHeadshots`
-- `/overlay-team-top.html?key=teamAssist`
-- `/overlay-team-top.html?key=teamRevival`
-- `/overlay-eliminated.html`
-- `/overlay-player-top.html?key=playerKills`
-- `/overlay-player-top.html?key=playerDamage`
-- `/overlay-player-top.html?key=playerAssist`
-- `/overlay-player-top.html?key=playerMovingDistance`
-- `/overlay-player-top.html?key=playerHeadshots`
-- `/overlay-player-top.html?key=playerKnockDown`
-- `/overlay-player-top.html?key=playerRescueMembers`
-- `/overlay-player-top.html?key=playerMaximumKillDistance`
+O cadastro é salvo em `players.json`. Se o mesmo ID for cadastrado novamente, o Nick é atualizado. Também é possível excluir registros pela própria interface.
 
-## Configuração das artes
+## Execução
 
-Edite apenas `overlay-config.js` para alterar posições e textos. Os PNGs podem ser substituídos mantendo os mesmos nomes.
+```bash
+npm install
+npm start
+```
 
-Edite `overlay-data.js` para associar:
-- Team ID/Team Name → logo
-- Player ID/UID/Player Name → foto
-
-Tudo foi mantido na raiz principal para facilitar o upload pelo GitHub no celular.
+A aplicação usa Node.js 20+, Express 5 e Playwright 1.62.1.
